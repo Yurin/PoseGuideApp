@@ -1,139 +1,90 @@
 import SwiftUI
+import LiveKit
 
 struct LiveRoomView: View {
     let role: UserRole
-    let roomName: String   // ← 合言葉（部屋名）を受け取る
-    
-    // お手本・フレーム画像
-    @State private var guideFrame: UIImage? = nil
-    @State private var sampleImage: UIImage? = nil
-    
-    // フレーム調整用パラメータ
-    @State private var opacity: Double = 0.7
-    @State private var scale: CGFloat = 1.0
-    @State private var offsetX: CGFloat = 0
-    @State private var offsetY: CGFloat = 0
-    @State private var lastDragOffset = CGSize.zero
-    @State private var lastScale: CGFloat = 1.0
+    let roomName: String
 
-    // UI状態
-    @State private var showImagePicker = false
-    @State private var isGenerating = false  // フレーム生成中フラグ
+    @StateObject private var room = Room()
+    @State private var localTrack: LocalVideoTrack?
+    @State private var remoteTrack: VideoTrack?
+    @State private var isConnected = false
+    @State private var errorMessage: String?
+
+    private let eventProxy = RoomEventProxy()
 
     var body: some View {
         ZStack {
-            // 背景（カメラ映像想定）
-            if role == .photographer {
-                Color.blue.opacity(0.2)
-                    .overlay(Text("撮影者ビュー").foregroundColor(.white))
-                    .ignoresSafeArea()
+            if isConnected {
+                if role == .subject, let remoteTrack {
+                    LKVideoView(track: remoteTrack, contentMode: .scaleAspectFit)
+                        .ignoresSafeArea()
+                } else if role == .photographer, let localTrack {
+                    LKVideoView(track: localTrack, contentMode: .scaleAspectFit)
+                        .ignoresSafeArea()
+                } else {
+                    Color.black.ignoresSafeArea()
+                        .overlay(Text("映像を待っています").foregroundColor(.white))
+                }
             } else {
-                Color.purple.opacity(0.2)
-                    .overlay(Text("被写体ビュー").foregroundColor(.white))
-                    .ignoresSafeArea()
+                Color.gray.opacity(0.3).ignoresSafeArea()
+                    .overlay(Text("接続中...").foregroundColor(.black))
             }
 
-            // 合言葉（ルーム名）を上部に表示
-            VStack {
-                Text("Room: \(roomName)")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .padding(.top, 50)
-                    .shadow(radius: 3)
-                Spacer()
-            }
-
-            // お手本写真（選択後に背面に表示）
-            if let sample = sampleImage {
-                Image(uiImage: sample)
-                    .resizable()
-                    .scaledToFit()
-                    .opacity(0.5)
-                    .padding()
-            }
-
-            // 役割別オーバーレイ（構図線など）
-            if role == .photographer {
-                PhotographerOverlay()
-            } else {
-                SubjectOverlay()
-            }
-
-            // フレーム画像（生成後のみ表示）
-            if let frame = guideFrame {
-                Image(uiImage: frame)
-                    .resizable()
-                    .scaledToFit()
-                    .scaleEffect(scale)
-                    .opacity(opacity)
-                    .offset(x: offsetX, y: offsetY)
-                    .gesture(
-                        DragGesture()
-                            .onChanged { value in
-                                offsetX = lastDragOffset.width + value.translation.width
-                                offsetY = lastDragOffset.height + value.translation.height
-                            }
-                            .onEnded { _ in
-                                lastDragOffset = CGSize(width: offsetX, height: offsetY)
-                            }
-                    )
-                    .simultaneousGesture(
-                        MagnificationGesture()
-                            .onChanged { value in
-                                scale = lastScale * value
-                            }
-                            .onEnded { _ in
-                                lastScale = scale
-                            }
-                    )
-                    .animation(.easeInOut(duration: 0.2), value: [scale, offsetX, offsetY, opacity])
-            }
-
-            // 状態に応じた下部UI
-            VStack {
-                Spacer()
-
-                if role == .subject {
-                    if sampleImage == nil {
-                        // お手本未選択時
-                        Button("お手本写真を選択") {
-                            showImagePicker = true
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .padding(.bottom, 40)
-                    } else if isGenerating {
-                        // フレーム生成中
-                        ProgressView("フレーム生成中...")
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                            .foregroundColor(.white)
-                            .padding(.bottom, 40)
-                    } else if guideFrame != nil {
-                        // フレーム生成済み
-                        Text("フレームをドラッグやピンチで調整できます")
-                            .foregroundColor(.white)
-                            .padding(.bottom, 40)
-                    }
+            if let errorMessage {
+                VStack {
+                    Spacer()
+                    Text(errorMessage)
+                        .foregroundColor(.red)
+                        .padding()
                 }
             }
         }
-        // 被写体が画像を選択したらフレーム生成をトリガー
-        .sheet(isPresented: $showImagePicker) {
-            ImagePicker(selectedImage: $sampleImage)
-                .onDisappear {
-                    if sampleImage != nil {
-                        generateFrame()
-                    }
-                }
+        .task {
+            await connectToRoom(roomName: roomName,
+                                identity: role == .photographer ? "photographer" : "subject")
         }
     }
 
-    // 仮のフレーム生成（サーバー接続前の疑似処理）
-    func generateFrame() {
-        isGenerating = true
-        guideFrame = nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            guideFrame = UIImage(named: "pose_guide1_silhouette")
-            isGenerating = false
+    @MainActor
+    func connectToRoom(roomName: String, identity: String) async {
+        let tokenURL = "http://192.168.50.42:3000/token?roomName=\(roomName)&identity=\(identity)"
+        guard let url = URL(string: tokenURL) else { return }
+
+        do {
+            // トークン取得
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let result = try JSONDecoder().decode([String: String].self, from: data)
+            guard let token = result["token"] else { throw URLError(.badServerResponse) }
+
+            // イベント設定
+            eventProxy.onRemoteVideo = { v in
+                Task { @MainActor in
+                    remoteTrack = v
+                }
+            }
+            room.add(delegate: eventProxy)
+
+            // 接続
+            try await room.connect(
+                url: "wss://poseguideapp-u7p300v5.livekit.cloud",
+                token: token
+            )
+
+            // 撮影者：カメラ起動＆配信
+            if role == .photographer {
+                localTrack = LocalVideoTrack.createCameraTrack()
+                if let localTrack {
+                    try await room.localParticipant.publish(videoTrack: localTrack)
+                }
+            }
+
+            isConnected = true
+            print("✅ Connected to room:", roomName)
+
+        } catch {
+            print("❌ Connection error:", error)
+            errorMessage = "接続に失敗しました"
         }
     }
 }
