@@ -6,33 +6,33 @@ enum UserRole {
 }
 
 struct ContentView: View {
-    @State private var selectedRole: UserRole?
-    @State private var navigate = false
-
     var body: some View {
         NavigationStack {
             VStack(spacing: 30) {
                 Text("役割を選択")
                     .font(.largeTitle.bold())
 
-                Button("📷 撮影者として入室") {
-                    selectedRole = .photographer
-                    navigate = true
+                NavigationLink(destination: JoinRoomView(role: .photographer)) {
+                    modeButton(label: "📷 撮影者として入室", color: .blue)
                 }
-                .buttonStyle(.borderedProminent)
 
-                Button("🤳 被写体として入室") {
-                    selectedRole = .subject
-                    navigate = true
+                NavigationLink(destination: JoinRoomView(role: .subject)) {
+                    modeButton(label: "🤳 被写体として入室", color: .pink)
                 }
-                .buttonStyle(.bordered)
+
+                Spacer()
             }
-            .navigationDestination(isPresented: $navigate) {
-                if let role = selectedRole {
-                    LiveRoomView(role: role)
-                }
-            }
+            .padding()
         }
+    }
+
+    func modeButton(label: String, color: Color) -> some View {
+        Text(label)
+            .font(.title2)
+            .foregroundColor(.white)
+            .frame(width: 250, height: 60)
+            .background(color)
+            .cornerRadius(12)
     }
 }
 
