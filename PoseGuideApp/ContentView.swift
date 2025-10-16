@@ -13,11 +13,11 @@ struct ContentView: View {
                     .font(.largeTitle.bold())
 
                 NavigationLink(destination: JoinRoomView(role: .photographer)) {
-                    modeButton(label: "📷 撮影者として入室", color: .blue)
+                    modeButton(label: "撮影者として入室", color: .blue)
                 }
 
                 NavigationLink(destination: JoinRoomView(role: .subject)) {
-                    modeButton(label: "🤳 被写体として入室", color: .pink)
+                    modeButton(label: "被写体として入室", color: .pink)
                 }
 
                 Spacer()

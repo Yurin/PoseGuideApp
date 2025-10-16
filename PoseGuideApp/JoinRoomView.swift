@@ -7,7 +7,7 @@ struct JoinRoomView: View {
 
     var body: some View {
         VStack(spacing: 30) {
-            Text(role == .photographer ? "📷 撮影者として入室" : "🤳 被写体として入室")
+            Text(role == .photographer ? "撮影者として入室" : "被写体として入室")
                 .font(.largeTitle.bold())
                 .padding(.top, 50)
 
@@ -15,7 +15,7 @@ struct JoinRoomView: View {
                 Text("ルーム合言葉を入力")
                     .font(.headline)
 
-                TextField("例：yuri001", text: $roomName)
+                TextField("例: yuri001", text: $roomName)
                     .textFieldStyle(.roundedBorder)
                     .padding(.horizontal, 40)
                     .autocapitalization(.none)
@@ -40,7 +40,8 @@ struct JoinRoomView: View {
         .padding()
         .background(Color(.systemBackground))
         .navigationDestination(isPresented: $navigate) {
-            LiveRoomView(role: role)
+            // roomNameをLiveRoomViewへ渡す
+            LiveRoomView(role: role, roomName: roomName)
         }
     }
 }

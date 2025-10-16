@@ -2,12 +2,13 @@ import SwiftUI
 
 struct LiveRoomView: View {
     let role: UserRole
+    let roomName: String   // ← 合言葉（部屋名）を受け取る
     
-    //お手本・フレーム画像
+    // お手本・フレーム画像
     @State private var guideFrame: UIImage? = nil
     @State private var sampleImage: UIImage? = nil
     
-    //フレーム調整用パラメータ
+    // フレーム調整用パラメータ
     @State private var opacity: Double = 0.7
     @State private var scale: CGFloat = 1.0
     @State private var offsetX: CGFloat = 0
@@ -15,9 +16,9 @@ struct LiveRoomView: View {
     @State private var lastDragOffset = CGSize.zero
     @State private var lastScale: CGFloat = 1.0
 
-    //UI状態
+    // UI状態
     @State private var showImagePicker = false
-    @State private var isGenerating = false  // ← フレーム生成中フラグ
+    @State private var isGenerating = false  // フレーム生成中フラグ
 
     var body: some View {
         ZStack {
@@ -30,6 +31,16 @@ struct LiveRoomView: View {
                 Color.purple.opacity(0.2)
                     .overlay(Text("被写体ビュー").foregroundColor(.white))
                     .ignoresSafeArea()
+            }
+
+            // 合言葉（ルーム名）を上部に表示
+            VStack {
+                Text("Room: \(roomName)")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding(.top, 50)
+                    .shadow(radius: 3)
+                Spacer()
             }
 
             // お手本写真（選択後に背面に表示）
@@ -48,7 +59,7 @@ struct LiveRoomView: View {
                 SubjectOverlay()
             }
 
-            //フレーム画像（生成後のみ表示）
+            // フレーム画像（生成後のみ表示）
             if let frame = guideFrame {
                 Image(uiImage: frame)
                     .resizable()
@@ -68,13 +79,17 @@ struct LiveRoomView: View {
                     )
                     .simultaneousGesture(
                         MagnificationGesture()
-                            .onChanged { value in scale = lastScale * value }
-                            .onEnded { _ in lastScale = scale }
+                            .onChanged { value in
+                                scale = lastScale * value
+                            }
+                            .onEnded { _ in
+                                lastScale = scale
+                            }
                     )
                     .animation(.easeInOut(duration: 0.2), value: [scale, offsetX, offsetY, opacity])
             }
 
-            //状態に応じた下部UI
+            // 状態に応じた下部UI
             VStack {
                 Spacer()
 
@@ -88,7 +103,7 @@ struct LiveRoomView: View {
                         .padding(.bottom, 40)
                     } else if isGenerating {
                         // フレーム生成中
-                        ProgressView("フレーム生成中…")
+                        ProgressView("フレーム生成中...")
                             .progressViewStyle(CircularProgressViewStyle(tint: .white))
                             .foregroundColor(.white)
                             .padding(.bottom, 40)
@@ -101,7 +116,7 @@ struct LiveRoomView: View {
                 }
             }
         }
-        //被写体が画像を選択したらフレーム生成処理をトリガー
+        // 被写体が画像を選択したらフレーム生成をトリガー
         .sheet(isPresented: $showImagePicker) {
             ImagePicker(selectedImage: $sampleImage)
                 .onDisappear {
@@ -112,12 +127,11 @@ struct LiveRoomView: View {
         }
     }
 
-    //仮のフレーム生成（サーバー接続前の疑似処理）
+    // 仮のフレーム生成（サーバー接続前の疑似処理）
     func generateFrame() {
         isGenerating = true
         guideFrame = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            // 擬似的にAssetsからフレーム画像を読み込む
             guideFrame = UIImage(named: "pose_guide1_silhouette")
             isGenerating = false
         }
