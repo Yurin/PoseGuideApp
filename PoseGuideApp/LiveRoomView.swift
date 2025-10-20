@@ -6,21 +6,21 @@ struct LiveRoomView: View {
     let roomName: String
 
     @StateObject private var room = Room()
-    @State private var localTrack: LocalVideoTrack?
-    @State private var remoteTrack: VideoTrack?
     @State private var isConnected = false
     @State private var errorMessage: String?
+    @State private var remoteTrack: VideoTrack?
+    @State private var localTrack: LocalVideoTrack?
 
     private let eventProxy = RoomEventProxy()
 
     var body: some View {
         ZStack {
             if isConnected {
-                if role == .subject, let remoteTrack {
-                    LKVideoView(track: remoteTrack, contentMode: .scaleAspectFit)
+                if role == .subject, let t = remoteTrack {
+                    LKVideoView(track: t, contentMode: .scaleAspectFit)
                         .ignoresSafeArea()
-                } else if role == .photographer, let localTrack {
-                    LKVideoView(track: localTrack, contentMode: .scaleAspectFit)
+                } else if role == .photographer, let lt = localTrack {
+                    LKVideoView(track: lt, contentMode: .scaleAspectFit)
                         .ignoresSafeArea()
                 } else {
                     Color.black.ignoresSafeArea()
@@ -34,56 +34,80 @@ struct LiveRoomView: View {
             if let errorMessage {
                 VStack {
                     Spacer()
-                    Text(errorMessage)
-                        .foregroundColor(.red)
-                        .padding()
+                    Text(errorMessage).foregroundColor(.red).padding()
                 }
             }
         }
         .task {
-            await connectToRoom(roomName: roomName,
-                                identity: role == .photographer ? "photographer" : "subject")
+            await connectToRoom(
+                roomName: roomName,
+                identity: role == .photographer ? "photographer" : "subject"
+            )
         }
     }
 
     @MainActor
     func connectToRoom(roomName: String, identity: String) async {
-        let tokenURL = "http://192.168.50.42:3000/token?roomName=\(roomName)&identity=\(identity)"
+        let tokenURL = "http://192.168.50.233:3000/token?roomName=\(roomName)&identity=\(identity)"
         guard let url = URL(string: tokenURL) else { return }
 
         do {
-            // トークン取得
+            // 1) トークン取得
             let (data, _) = try await URLSession.shared.data(from: url)
             let result = try JSONDecoder().decode([String: String].self, from: data)
             guard let token = result["token"] else { throw URLError(.badServerResponse) }
 
-            // イベント設定
+            // 2) delegate を接続前に登録
+            room.removeAllDelegates()
             eventProxy.onRemoteVideo = { v in
-                Task { @MainActor in
-                    remoteTrack = v
-                }
+                self.remoteTrack = v
+                print("Remote video attached:", v.name)
             }
             room.add(delegate: eventProxy)
 
-            // 接続
+            // 3) 接続（自動サブスク ON）
+            let connectOptions = ConnectOptions(autoSubscribe: true)
             try await room.connect(
                 url: "wss://poseguideapp-u7p300v5.livekit.cloud",
-                token: token
+                token: token,
+                connectOptions: connectOptions
             )
+            print("Connected to room:", roomName)
+            isConnected = true
 
-            // 撮影者：カメラ起動＆配信
-            if role == .photographer {
-                localTrack = LocalVideoTrack.createCameraTrack()
-                if let localTrack {
-                    try await room.localParticipant.publish(videoTrack: localTrack)
+            // 4) フェールセーフ：既存公開済みトラックを拾う（複数回試行）
+            func attachExistingIfAny() {
+                for (_, rp) in room.remoteParticipants {
+                    for pub in rp.videoTracks {
+                        if let t = pub.track as? VideoTrack {
+                            self.remoteTrack = t
+                            print("attached existing remote video:", t.name, "pub:", pub.sid)
+                            return
+                        }
+                    }
                 }
             }
+            // 即時 + 0.3s / 0.8s / 1.5s リトライ
+            attachExistingIfAny()
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                attachExistingIfAny()
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                attachExistingIfAny()
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                attachExistingIfAny()
+            }
 
-            isConnected = true
-            print("✅ Connected to room:", roomName)
+            // 5) 撮影者のみカメラ publish
+            if identity == "photographer" {
+                let cam = LocalVideoTrack.createCameraTrack()
+                self.localTrack = cam
+                try await room.localParticipant.publish(videoTrack: cam)
+                print("Published local camera video")
+            }
 
         } catch {
-            print("❌ Connection error:", error)
+            print("Connection error:", error)
             errorMessage = "接続に失敗しました"
         }
     }
