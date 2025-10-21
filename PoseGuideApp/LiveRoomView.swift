@@ -67,22 +67,8 @@ struct LiveRoomView: View {
             if role == .subject {
                 VStack {
                     Spacer()
-                    HStack(spacing: 12) {
-                        Text("フレーム調整").foregroundColor(.white).bold()
-                        Slider(
-                            value: Binding(
-                                get: { guide.opacity },
-                                set: { newVal in
-                                    guide.opacity = newVal
-                                    Task { await sendGuide(.update) }
-                                }
-                            ),
-                            in: 0...1
-                        )
-                        .frame(width: 160)
-
+                    HStack {
                         Spacer()
-
                         Button("確定") {
                             Task { await sendGuide(.lock) }
                         }
@@ -94,6 +80,7 @@ struct LiveRoomView: View {
                     .padding(.bottom, 20)
                 }
             }
+
 
             // ===== 撮影者 UI（右下のカメラ切替、下中央のシャッター） =====
             if role == .photographer {
