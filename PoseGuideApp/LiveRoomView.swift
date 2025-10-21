@@ -480,299 +480,298 @@ import SwiftUI
 import LiveKit
 import Photos
 
+// UIKit の LiveKit.VideoView を SwiftUI で使い、実体参照を保持するラッパ
+struct VideoViewContainer: UIViewRepresentable {
+    let track: VideoTrack
+    let contentMode: UIView.ContentMode
+
+    final class RefBox { weak var view: VideoView? }
+    let refBox: RefBox
+
+    func makeUIView(context: Context) -> UIView {
+        let host = UIView()
+        host.isOpaque = true
+        host.backgroundColor = .black
+        host.layer.masksToBounds = false
+
+        let v = VideoView()
+        v.isOpaque = true
+        v.backgroundColor = .black
+        v.layer.masksToBounds = false
+        v.contentMode = contentMode
+        v.track = track
+
+        v.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(v)
+        NSLayoutConstraint.activate([
+            v.topAnchor.constraint(equalTo: host.topAnchor),
+            v.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            v.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            v.trailingAnchor.constraint(equalTo: host.trailingAnchor)
+        ])
+
+        refBox.view = v
+        return host
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        if let v = refBox.view {
+            v.track = track
+            v.contentMode = contentMode
+        }
+    }
+}
+
 struct LiveRoomView: View {
+    enum UserRole { case photographer, subject }
+
     let role: UserRole
     let roomName: String
 
     @StateObject private var room = Room()
-
     @State private var isConnected = false
     @State private var errorMessage: String?
 
-    // 強参照保持（超重要：connect 中に委譲が解放されないようにする）
-    @State private var simpleDelegate: SimpleRoomDelegate?
-
-    // 映像
+    // 最小限：ビデオ
     @State private var remoteTrack: VideoTrack?
     @State private var localTrack: LocalVideoTrack?
 
-    // ガイド（最小：不透明度だけ）
-    @State private var guide = GuideState()
+    // ガイド（既存の GuideState.swift を使用：opacity / scale / offsetX / offsetY）
     @State private var guideImage: UIImage? = UIImage(named: "pose_guide1_silhouette")
+    @State private var guide = GuideState()
 
-    // カメラ（撮影者のみ）
+    // スナップショット用：VideoView 実体への参照
+    private let videoRefBox = VideoViewContainer.RefBox()
+
+    // カメラ向き
     enum CamPos { case front, back }
     @State private var camPos: CamPos = .front
 
-    // 二重接続防止
-    @State private var didStartConnect = false
-
     var body: some View {
         ZStack {
-            // ==== 映像レイヤー ====
             if isConnected {
                 if role == .subject, let t = remoteTrack {
-                    LKVideoView(track: t, contentMode: .scaleAspectFit)
-                        .ignoresSafeArea()
+                    VideoHost(track: t).ignoresSafeArea()
                 } else if role == .photographer, let lt = localTrack {
-                    LKVideoView(track: lt, contentMode: .scaleAspectFit)
-                        .ignoresSafeArea()
+                    VideoHostLocal(track: lt).ignoresSafeArea()
                 } else {
-                    Color.black.ignoresSafeArea()
-                        .overlay(Text("映像を待っています").foregroundColor(.white))
+                    Color.black.overlay(Text("映像を待っています").foregroundColor(.white))
                 }
             } else {
-                Color.gray.opacity(0.2).ignoresSafeArea()
-                    .overlay(Text("接続中..."))
+                Color.gray.opacity(0.2).overlay(Text("接続中..."))
             }
 
-            // ==== ガイド（両者に同じ画像を重ねる・同期なしの最小デモ） ====
-            if let ui = guideImage {
-                Image(uiImage: ui)
+            // ---- ガイド（両者で同じものを見る／今回は不透明度のみ調整可）----
+            if let gimg = guideImage {
+                Image(uiImage: gimg)
                     .resizable()
                     .scaledToFit()
+                    .scaleEffect(guide.scale)
+                    .offset(x: CGFloat(guide.offsetX), y: CGFloat(guide.offsetY))
                     .opacity(guide.opacity)
-                    .padding()
                     .allowsHitTesting(false)
                     .animation(.easeInOut(duration: 0.15), value: guide.opacity)
             }
 
-            // ==== 共通：ガイド不透明度スライダー ====
+            // ---- 下部 UI ----
             VStack {
                 Spacer()
                 HStack {
-                    Image(systemName: "square.stack.3d.down.forward")
-                    Slider(value: Binding(
-                        get: { guide.opacity },
-                        set: { guide.opacity = min(1.0, max(0.0, $0)) }
-                    ), in: 0...1, step: 0.01)
-                    Text(String(format: "%.0f%%", guide.opacity * 100))
-                        .monospacedDigit()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(.ultraThinMaterial, in: Capsule())
-                .padding(.bottom, role == .photographer ? 120 : 24)
-            }
-            .padding(.horizontal)
+                    // 不透明度スライダー（両者とも操作可）
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("ガイド不透明度 \(String(format: "%.2f", guide.opacity))")
+                            .font(.caption)
+                            .foregroundColor(.white)
+                        Slider(value: Binding(get: { guide.opacity },
+                                              set: { guide.opacity = $0 }),
+                               in: 0...1)
+                            .frame(width: 220)
+                    }
+                    .padding(12)
+                    .background(.black.opacity(0.5))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.leading, 16)
 
-            // ==== 撮影者 UI：右下カメラ切替 & 下中央シャッター ====
-            if role == .photographer {
-                VStack {
                     Spacer()
-                    HStack {
-                        Spacer()
-                        Button {
-                            Task { await switchCamera(camPos == .front ? .back : .front) }
-                        } label: {
-                            Image(systemName: "arrow.triangle.2.circlepath.camera")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundColor(.black)
-                                .frame(width: 56, height: 56)
-                                .background(.white)
-                                .clipShape(Circle())
-                                .shadow(radius: 6, y: 2)
+
+                    if role == .photographer {
+                        HStack(spacing: 12) {
+                            Button {
+                                Task { await switchCamera(camPos == .front ? .back : .front) }
+                            } label: {
+                                Image(systemName: "arrow.triangle.2.circlepath.camera")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundColor(.black)
+                                    .frame(width: 44, height: 44)
+                                    .background(.white)
+                                    .clipShape(Circle())
+                                    .shadow(radius: 4, y: 2)
+                            }
+
+                            Button {
+                                Task { await captureAndSaveCurrentFrame() }
+                            } label: {
+                                ZStack {
+                                    Circle().fill(Color.white.opacity(0.95)).frame(width: 64, height: 64)
+                                    Circle().stroke(Color.white, lineWidth: 3).frame(width: 76, height: 76)
+                                }
+                            }
                         }
-                        .padding(.trailing, 20)
-                        .padding(.bottom, 110)
+                        .padding(.trailing, 16)
                     }
                 }
-                .ignoresSafeArea()
-
-                VStack {
-                    Spacer()
-                    Button {
-                        Task { await captureAndSaveCurrentFrame() }
-                    } label: {
-                        ZStack {
-                            Circle().fill(Color.white.opacity(0.9)).frame(width: 72, height: 72)
-                            Circle().stroke(Color.white, lineWidth: 3).frame(width: 84, height: 84)
-                        }
-                    }
-                    .padding(.bottom, 28)
-                }
-                .ignoresSafeArea()
+                .padding(.bottom, 20)
             }
 
             if let errorMessage {
                 VStack { Spacer(); Text(errorMessage).foregroundColor(.red).padding() }
             }
         }
-        // 左上に room.name（サーバが返した実名）を表示
         .overlay(alignment: .topLeading) {
             Text("room: \(room.name ?? "-")")
                 .font(.caption2)
-                .padding(6)
-                .background(Color.black.opacity(0.35))
                 .foregroundColor(.white)
-                .cornerRadius(6)
-                .padding()
+                .padding(6)
+                .background(.black.opacity(0.4))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .padding(8)
         }
         .task {
-            guard !didStartConnect else { return }
-            didStartConnect = true
-            await connectToRoom(roomName: roomName, identity: role == .photographer ? "photographer" : "subject")
+            await connectToRoom(roomName: roomName,
+                                identity: role == .photographer ? "photographer" : "subject")
         }
-        .onDisappear {
-            Task { await room.disconnect() }
-        }
+        .onDisappear { Task { await room.disconnect() } }
     }
 
-    // MARK: - 接続
-    @MainActor
+    @ViewBuilder
+    private func VideoHost(track: VideoTrack) -> some View {
+        VideoViewContainer(track: track,
+                           contentMode: .scaleAspectFit,
+                           refBox: videoRefBox)
+    }
+
+    @ViewBuilder
+    private func VideoHostLocal(track: LocalVideoTrack) -> some View {
+        // LocalVideoTrack は VideoTrack を継承
+        VideoViewContainer(track: track,
+                           contentMode: .scaleAspectFit,
+                           refBox: videoRefBox)
+    }
+
+    // MARK: - 接続（最小）
     private func connectToRoom(roomName: String, identity: String) async {
         let tokenURL = "http://192.168.50.233:3000/token?roomName=\(roomName)&identity=\(identity)"
-        guard let url = URL(string: tokenURL) else {
-            errorMessage = "トークン URL が不正です"
-            return
-        }
+        guard let url = URL(string: tokenURL) else { return }
 
         do {
-            print("[TOKEN] GET \(tokenURL)")
             let (data, _) = try await URLSession.shared.data(from: url)
-            if let raw = String(data: data, encoding: .utf8) { print("[TOKEN RAW] \(raw)") }
-            let json = try JSONDecoder().decode([String: String].self, from: data)
-            guard let token = json["token"] else { throw URLError(.badServerResponse) }
+            let result = try JSONDecoder().decode([String: String].self, from: data)
+            guard let token = result["token"] else { throw URLError(.badServerResponse) }
 
-            // 1) connect 前に delegate を add（＆強参照保持）
+            // リモートの映像購読だけ拾うデリゲート
             room.removeAllDelegates()
-            let delegate = SimpleRoomDelegate { v in
-                Task { @MainActor in
-                    self.remoteTrack = v
-                    print("[VIEW] remote track set:", v.name)
-                }
-            }
-            room.add(delegate: delegate)
-            self.simpleDelegate = delegate
-            print("[CONNECT] Proxy added")
+            let del = SimpleRoomDelegate { v in self.remoteTrack = v }
+            room.add(delegate: del)
 
-            // 2) 接続（被写体は autoSubscribe: true で自動購読）
+            let connectOptions = ConnectOptions(autoSubscribe: true)
             try await room.connect(
                 url: "wss://poseguideapp-u7p300v5.livekit.cloud",
                 token: token,
-                connectOptions: ConnectOptions(autoSubscribe: true)
+                connectOptions: connectOptions
             )
             isConnected = true
-            print("[CONNECT] connected to room:", room.name ?? "-")
 
-            // 3) 既存のトラックを拾う（接続順で取れないことがあるため）
-            attachExistingRemoteIfAny()
-
-            // 4) 撮影者のみカメラ publish（1度だけ）
             if identity == "photographer" {
                 try await publishCamera(position: camPos)
+            } else {
+                attachExistingRemoteIfAny()
             }
-
         } catch {
-            print("[CONNECT][ERR]", error.localizedDescription)
-            errorMessage = "接続に失敗しました"
+            print("[CONNECT][ERR] \(error)")
+            self.errorMessage = "接続に失敗しました"
         }
     }
 
-    @MainActor
     private func attachExistingRemoteIfAny() {
-        var picked = false
         for (_, rp) in room.remoteParticipants {
             for pub in rp.videoTracks {
                 if let t = pub.track as? VideoTrack {
                     self.remoteTrack = t
-                    print("[REMOTE] attached existing:", t.name, "pub:", pub.sid, "from:", rp.identity ?? "(nil)")
-                    picked = true
-                    break
+                    return
                 }
             }
-            if picked { break }
         }
-        if !picked { print("[REMOTE] no existing remote video found") }
     }
 
-    // MARK: - カメラ制御（撮影者）
-    @MainActor
+    // MARK: - カメラ
     private func publishCamera(position: CamPos) async throws {
-        if localTrack == nil {
-            let options = CameraCaptureOptions(position: position == .front ? .front : .back)
-            let cam = LocalVideoTrack.createCameraTrack(options: options)
-            self.localTrack = cam
-            _ = try await room.localParticipant.publish(videoTrack: cam)
-            print("[CAMERA] published video (\(position == .front ? "front" : "back"))")
+        if let track = localTrack,
+           let capturer = track.capturer as? CameraCapturer {
+            try await capturer.set(cameraPosition: position == .front ? .front : .back)
+            camPos = position
+            return
         }
+        let options = CameraCaptureOptions(position: position == .front ? .front : .back)
+        let cam = LocalVideoTrack.createCameraTrack(options: options)
+        self.localTrack = cam
+        _ = try await room.localParticipant.publish(videoTrack: cam)
+        camPos = position
     }
 
-    @MainActor
     private func switchCamera(_ to: CamPos) async {
-        guard role == .photographer else { return }
         do {
-            if let track = localTrack,
-               let capturer = track.capturer as? CameraCapturer {
-                try await capturer.set(cameraPosition: to == .front ? .front : .back)
-                camPos = to
-                print("[CAMERA] switched -> \(to == .front ? "front" : "back")")
-            } else {
-                try await publishCamera(position: to)
-                camPos = to
-            }
+            try await publishCamera(position: to)
         } catch {
-            print("[CAMERA][ERR]", error.localizedDescription)
             self.errorMessage = "カメラ切替に失敗しました"
         }
     }
 
-    // MARK: - シャッター（撮影者）
-    @MainActor
+    // MARK: - 撮影（ガイド抜きで VideoView だけ保存）
     private func captureAndSaveCurrentFrame() async {
-        guard role == .photographer else { return }
-
-        // 写真保存の権限
         let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
         if status == .notDetermined {
             _ = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         }
         guard PHPhotoLibrary.authorizationStatus(for: .addOnly) == .authorized else {
-            self.errorMessage = "写真の保存が許可されていません（設定で許可してください）"
+            self.errorMessage = "写真への保存が許可されていません（設定で許可してください）"
             return
         }
 
-        // レンダリング（画面と同じ重なりで保存）
-        let renderer = ImageRenderer(content: snapshotView)
-        renderer.scale = UIScreen.main.scale
+        guard let videoView = videoRefBox.view else {
+            self.errorMessage = "映像ビューが見つかりません"
+            return
+        }
 
-        if let image = renderer.uiImage {
-            PHPhotoLibrary.shared().performChanges({
-                PHAssetChangeRequest.creationRequestForAsset(from: image)
-            }) { success, err in
-                Task { @MainActor in
-                    if success {
-                        print("[SNAPSHOT] saved")
-                    } else {
-                        self.errorMessage = "保存に失敗しました"
-                        print("[SNAPSHOT][ERR]", err?.localizedDescription ?? "unknown")
-                    }
+        videoView.layoutIfNeeded()
+
+        let targetSize = videoView.bounds.size
+        guard targetSize.width > 0, targetSize.height > 0 else {
+            self.errorMessage = "映像ビューのサイズが不正です"
+            return
+        }
+
+        let scale = UIScreen.main.scale
+        let renderer = UIGraphicsImageRenderer(size: targetSize, format: {
+            let f = UIGraphicsImageRendererFormat()
+            f.scale = scale
+            f.opaque = true
+            return f
+        }())
+
+        let image = renderer.image { ctx in
+            ctx.cgContext.setFillColor(UIColor.black.cgColor)
+            ctx.cgContext.fill(CGRect(origin: .zero, size: targetSize))
+            videoView.layer.render(in: ctx.cgContext) // ガイドは含まれない
+        }
+
+        PHPhotoLibrary.shared().performChanges({
+            PHAssetChangeRequest.creationRequestForAsset(from: image)
+        }) { success, err in
+            DispatchQueue.main.async {
+                if !success {
+                    self.errorMessage = "保存に失敗しました: \(err?.localizedDescription ?? "unknown")"
                 }
             }
-        } else {
-            self.errorMessage = "撮影に失敗しました"
         }
-    }
-
-    @ViewBuilder
-    private var snapshotView: some View {
-        ZStack {
-            if role == .subject, let t = remoteTrack {
-                LKVideoView(track: t, contentMode: .scaleAspectFit)
-            } else if role == .photographer, let lt = localTrack {
-                LKVideoView(track: lt, contentMode: .scaleAspectFit)
-            } else {
-                Color.black
-            }
-            if let ui = guideImage {
-                Image(uiImage: ui)
-                    .resizable()
-                    .scaledToFit()
-                    .opacity(guide.opacity)
-                    .padding()
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea()
     }
 }
