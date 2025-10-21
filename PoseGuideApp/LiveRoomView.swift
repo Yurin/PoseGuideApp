@@ -17,7 +17,7 @@ struct LiveRoomView: View {
     @State private var localPub: LocalTrackPublication?   // unpublish 用
 
     // ガイド
-    @State private var guideFrame: UIImage? = UIImage(named: "frame_sample")
+    @State private var guideFrame: UIImage? = UIImage(named: "pose_guide1_silhouette")
     @State private var guide = GuideState()
     @State private var guideLocked = false
 
