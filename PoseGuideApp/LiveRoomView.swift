@@ -720,7 +720,7 @@ struct LiveRoomView: View {
     // ===== 接続 =====
     @MainActor
     private func connectToRoom(roomName: String, identity: String) async {
-        let tokenURL = "http://192.168.50.233:3000/token?roomName=\(roomName)&identity=\(identity)"
+        let tokenURL = "http://172.30.57.208:3000/token?roomName=\(roomName)&identity=\(identity)"
         guard let url = URL(string: tokenURL) else {
             print("[CONNECT][ERR] token URL invalid:", tokenURL); return
         }
