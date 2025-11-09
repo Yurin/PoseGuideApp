@@ -33,9 +33,22 @@
 		5F18AC252E97B4740036142F /* PoseGuideAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PoseGuideAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		5F532BBB2EA61A49006A17CB /* Exceptions for "PoseGuideApp" folder in "PoseGuideApp" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 5F18AC0D2E97B4730036142F /* PoseGuideApp */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		5F18AC102E97B4730036142F /* PoseGuideApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				5F532BBB2EA61A49006A17CB /* Exceptions for "PoseGuideApp" folder in "PoseGuideApp" target */,
+			);
 			path = PoseGuideApp;
 			sourceTree = "<group>";
 		};
@@ -407,9 +420,12 @@
 				DEVELOPMENT_TEAM = UF53674F36;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PoseGuideApp/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "";
 				INFOPLIST_KEY_LSApplicationCategoryType = "";
 				INFOPLIST_KEY_NSCameraUsageDescription = "撮影のためにカメラを使用します";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "音声通信のためにマイクを使用します";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -438,9 +454,12 @@
 				DEVELOPMENT_TEAM = UF53674F36;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PoseGuideApp/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "";
 				INFOPLIST_KEY_LSApplicationCategoryType = "";
 				INFOPLIST_KEY_NSCameraUsageDescription = "撮影のためにカメラを使用します";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "音声通信のためにマイクを使用します";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

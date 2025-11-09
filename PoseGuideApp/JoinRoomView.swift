@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct JoinRoomView: View {
-    let role: UserRole
+    let role: LiveRoomView.UserRole     // ← ここを修正
     @State private var roomName: String = ""
     @State private var navigate = false
 
@@ -18,15 +18,13 @@ struct JoinRoomView: View {
                 TextField("例: yuri001", text: $roomName)
                     .textFieldStyle(.roundedBorder)
                     .padding(.horizontal, 40)
-                    .autocapitalization(.none)
-                    .disableAutocorrection(true)
+                    .textInputAutocapitalization(.never) // iOS 15+
+                    .autocorrectionDisabled()
             }
 
-            Button(action: {
-                if !roomName.isEmpty {
-                    navigate = true
-                }
-            }) {
+            Button {
+                if !roomName.isEmpty { navigate = true }
+            } label: {
                 Text("入室する")
                     .frame(width: 200, height: 50)
                     .background(roomName.isEmpty ? Color.gray : Color.blue)
@@ -40,7 +38,6 @@ struct JoinRoomView: View {
         .padding()
         .background(Color(.systemBackground))
         .navigationDestination(isPresented: $navigate) {
-            // roomNameをLiveRoomViewへ渡す
             LiveRoomView(role: role, roomName: roomName)
         }
     }

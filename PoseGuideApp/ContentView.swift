@@ -1,38 +1,37 @@
 import SwiftUI
 
-enum UserRole {
-    case photographer
-    case subject
-}
-
 struct ContentView: View {
+    @State private var roomName = ""
+    @State private var role: LiveRoomView.UserRole = .photographer
+    @State private var go = false
+
     var body: some View {
         NavigationStack {
-            VStack(spacing: 30) {
-                Text("役割を選択")
-                    .font(.largeTitle.bold())
-
-                NavigationLink(destination: JoinRoomView(role: .photographer)) {
-                    modeButton(label: "撮影者として入室", color: .blue)
+            Form {
+                Section("役割") {
+                    Picker("", selection: $role) {
+                        Text("撮影者").tag(LiveRoomView.UserRole.photographer)
+                        Text("被写体").tag(LiveRoomView.UserRole.subject)
+                    }
+                    .pickerStyle(.segmented)
                 }
-
-                NavigationLink(destination: JoinRoomView(role: .subject)) {
-                    modeButton(label: "被写体として入室", color: .pink)
+                Section("合言葉（ルーム名）") {
+                    TextField("例: demo", text: $roomName)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                 }
-
-                Spacer()
+                Section {
+                    Button("入室") {
+                        go = true
+                    }
+                    .disabled(roomName.isEmpty)
+                }
             }
-            .padding()
+            .navigationDestination(isPresented: $go) {
+                LiveRoomView(role: role, roomName: roomName)
+            }
+            .navigationTitle("PoseGuide デモ")
         }
-    }
-
-    func modeButton(label: String, color: Color) -> some View {
-        Text(label)
-            .font(.title2)
-            .foregroundColor(.white)
-            .frame(width: 250, height: 60)
-            .background(color)
-            .cornerRadius(12)
     }
 }
 
