@@ -8,7 +8,6 @@ public struct GuideState: Codable, Equatable {
     public var offsetY: Double = 0
 }
 
-// （将来拡張用：今のミニマム実装では未使用でもOK）
 public enum GuideEventType: String, Codable {
     case update
     case lock

@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct JoinRoomView: View {
-    let role: LiveRoomView.UserRole     // ← ここを修正
+    let role: LiveRoomView.UserRole     
     @State private var roomName: String = ""
     @State private var navigate = false
 
