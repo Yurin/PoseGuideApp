@@ -892,6 +892,8 @@ struct LiveRoomView: View {
     enum UserRole { case photographer, subject }
     let role: UserRole
     let roomName: String
+    let initialGuideFrame: UIImage?
+    let initialGuideIndex: Int?
 
     // LiveKit
     @StateObject private var room = Room()
@@ -928,7 +930,7 @@ struct LiveRoomView: View {
     ]
 
     @State private var selectedGuideIndex: Int = 0
-    @State private var guideImage: UIImage? = UIImage(named: "pose_guide1_silhouette")
+    @State private var guideImage: UIImage?
 
     // 透過度（両者共通UI・上固定）
     @State private var guideOpacity: CGFloat = 1.0
@@ -940,7 +942,6 @@ struct LiveRoomView: View {
     @State private var workRotation: Angle = .zero
 
     // 被写体 UI
-    @State private var showGuidePicker = false
     @State private var showSentToast = false
 
     // 受信ログの簡易表示（撮影者側だけ）
@@ -948,6 +949,25 @@ struct LiveRoomView: View {
 
     // 生写真キャプチャ
     private let singleShot = SingleShotCapturer()
+
+    // 初期ガイド設定済みフラグ
+    @State private var didSetupInitialGuide = false
+
+    // カスタム init
+    init(
+        role: UserRole,
+        roomName: String,
+        initialGuideFrame: UIImage? = nil,
+        initialGuideIndex: Int? = nil
+    ) {
+        self.role = role
+        self.roomName = roomName
+        self.initialGuideFrame = initialGuideFrame
+        self.initialGuideIndex = initialGuideIndex
+
+        _selectedGuideIndex = State(initialValue: initialGuideIndex ?? 0)
+        _guideImage = State(initialValue: nil)
+    }
 
     // 現在の見た目に効く合成変形
     private var effScale: CGFloat { baseTransform.scale * workScale }
@@ -973,6 +993,21 @@ struct LiveRoomView: View {
         return UIImage(named: photoAssets[selectedGuideIndex])
     }
 
+    // 初期ガイドのセットアップ
+    private func setupInitialGuide() {
+        if let img = initialGuideFrame {
+            // SubjectSetupView から UIImage が渡されたケース
+            guideImage = img
+        } else if let idx = initialGuideIndex,
+                  frameAssets.indices.contains(idx) {
+            // インデックスだけ渡されたケース
+            guideImage = UIImage(named: frameAssets[idx])
+        } else {
+            // 何も指定がないときはフレーム無し
+            guideImage = nil
+        }
+    }
+
     // ===== body =====
     var body: some View {
         ZStack {
@@ -984,13 +1019,22 @@ struct LiveRoomView: View {
         }
         .overlay(roomInfoOverlay, alignment: .topLeading)
         .overlay(referenceOverlay, alignment: .topTrailing)
-        .safeAreaInset(edge: .top) { opacitySlider }
-        .safeAreaInset(edge: .bottom) { guideTray }
+        // safeAreaInset はやめて overlay で上にかぶせる
+        .overlay(alignment: .top) {
+            opacitySlider
+                .padding(.top, 6)
+        }
         .task {
             await connectToRoom(
                 roomName: roomName,
                 identity: (role == .photographer ? "photographer" : "subject")
             )
+        }
+        .onAppear {
+            if !didSetupInitialGuide {
+                setupInitialGuide()
+                didSetupInitialGuide = true
+            }
         }
         .onDisappear {
             Task { await room.disconnect() }
@@ -1001,8 +1045,14 @@ struct LiveRoomView: View {
     @ViewBuilder
     private var previewArea: some View {
         GeometryReader { geo in
-            let screenSize = geo.size
-            let containerSize = containerSizeFor4to3(screenSize: screenSize)
+            let size = geo.size
+
+            // 幅:高さ = 3:4 を保ったまま、画面に収まる最大サイズ
+            let targetW: CGFloat = 3.0
+            let targetH: CGFloat = 4.0
+            let scale = min(size.width / targetW, size.height / targetH)
+            let width = targetW * scale
+            let height = targetH * scale
 
             ZStack {
                 // 映像レイヤ
@@ -1041,26 +1091,8 @@ struct LiveRoomView: View {
                         .gesture(role == .subject ? subjectTransformGestures() : nil)
                 }
             }
-            .frame(width: containerSize.width, height: containerSize.height)
-            .position(x: screenSize.width / 2, y: screenSize.height / 2)
-        }
-    }
-
-    private func containerSizeFor4to3(screenSize: CGSize) -> CGSize {
-        // targetRatio = width / height = 3:4
-        let targetRatio: CGFloat = 3.0 / 4.0
-        let screenRatio = screenSize.width / screenSize.height
-
-        if screenRatio > targetRatio {
-            // 画面の方が横長 => 高さ基準
-            let h = screenSize.height
-            let w = h * targetRatio
-            return CGSize(width: w, height: h)
-        } else {
-            // 画面の方が縦長 or ちょうど => 幅基準
-            let w = screenSize.width
-            let h = w / targetRatio
-            return CGSize(width: w, height: h)
+            .frame(width: width, height: height)
+            .position(x: size.width / 2, y: size.height / 2)
         }
     }
 
@@ -1107,38 +1139,14 @@ struct LiveRoomView: View {
         }
     }
 
-    // ===== 被写体 UI =====
+    // ===== 被写体 UI（フレーム切り替えボタンは出さない） =====
     @ViewBuilder
     private var subjectUI: some View {
         if role == .subject {
             VStack {
                 Spacer()
                 HStack {
-                    // 左下：トグル
-                    Button {
-                        withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
-                            showGuidePicker.toggle()
-                        }
-                    } label: {
-                        Image(systemName: "photo.on.rectangle")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundColor(.black)
-                            .frame(width: 48, height: 48)
-                            .background(.white)
-                            .clipShape(Circle())
-                            .shadow(radius: 6, y: 2)
-                            .overlay(
-                                Group {
-                                    if showGuidePicker {
-                                        Circle().stroke(Color.blue, lineWidth: 2)
-                                    }
-                                }
-                            )
-                    }
-                    .padding(.leading, 20)
-
                     Spacer()
-
                     // 右下：確定
                     Button {
                         Task { await confirmGuideSync() }
@@ -1253,15 +1261,18 @@ struct LiveRoomView: View {
         }
     }
 
-    // ===== 上部 透過度スライダ =====
+    // ===== 上部 透過度スライダ（safeAreaInset ではなく overlay 用） =====
     private var opacitySlider: some View {
         HStack {
             Image(systemName: "square.on.square.dashed")
-            Slider(value: Binding(get: {
-                guideOpacity
-            }, set: { v in
-                guideOpacity = v
-            }), in: 0.0...1.0)
+            Slider(
+                value: Binding(get: {
+                    guideOpacity
+                }, set: { v in
+                    guideOpacity = v
+                }),
+                in: 0.0...1.0
+            )
             .frame(maxWidth: 260)
             Text(String(format: "%.0f%%", guideOpacity * 100))
                 .monospacedDigit()
@@ -1271,58 +1282,6 @@ struct LiveRoomView: View {
         .background(.ultraThinMaterial)
         .clipShape(Capsule())
         .padding(.top, 6)
-    }
-
-    // ===== 下部 サムネトレイ =====
-    @ViewBuilder
-    private var guideTray: some View {
-        if role == .subject && showGuidePicker {
-            HStack(spacing: 10) {
-                ForEach(0..<photoAssets.count, id: \.self) { idx in
-                    Button {
-                        Task {
-                            await selectGuide(index: idx) // 送信はしない、ローカルのみ
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
-                                showGuidePicker = false
-                            }
-                        }
-                    } label: {
-                        let img = UIImage(named: photoAssets[idx])
-                        ZStack {
-                            if let ii = img {
-                                Image(uiImage: ii)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 64, height: 64)
-                                    .clipped()
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(Color.white, lineWidth: 1)
-                                    )
-                            } else {
-                                Color.black.opacity(0.2)
-                                    .frame(width: 64, height: 64)
-                                    .overlay(Text("\(idx+1)").foregroundColor(.white))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(Color.white, lineWidth: 1)
-                                    )
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(idx == selectedGuideIndex ? Color.blue : Color.clear, lineWidth: 3)
-                    )
-                }
-            }
-            .padding(10)
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .padding(.bottom, 64)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-        }
     }
 
     // ===== 被写体の変形ジェスチャ（確定まで送信しない） =====
@@ -1355,7 +1314,10 @@ struct LiveRoomView: View {
                 workRotation = .zero
             }
 
-        return SimultaneousGesture(SimultaneousGesture(pinch, drag), rotate)
+        return SimultaneousGesture(
+            SimultaneousGesture(pinch, drag),
+            rotate
+        )
     }
 
     // ===== デリゲート =====
@@ -1516,7 +1478,7 @@ struct LiveRoomView: View {
         }
     }
 
-    // ===== ガイド選択（ローカルのみ反映・送信なし） =====
+    // ===== ガイド選択（今は UI から呼ばれないが撮影者側の受信処理用に残す） =====
     @MainActor
     private func selectGuide(index: Int) async {
         guard frameAssets.indices.contains(index), photoAssets.indices.contains(index) else { return }

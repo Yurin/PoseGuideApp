@@ -21,16 +21,20 @@ struct ContentView: View {
                         .autocorrectionDisabled()
                 }
                 Section {
-                    Button("入室") {
+                    Button("決定") {
                         go = true
                     }
                     .disabled(roomName.isEmpty)
                 }
             }
             .navigationDestination(isPresented: $go) {
-                LiveRoomView(role: role, roomName: roomName)
+                if role == .subject {
+                    SubjectSetupView(role: role, roomName: roomName)
+                } else {
+                    LiveRoomView(role: role, roomName: roomName)
+                }
             }
-            .navigationTitle("協力撮影 デモ")
+            .navigationTitle("協力撮影デモ")
         }
     }
 }
