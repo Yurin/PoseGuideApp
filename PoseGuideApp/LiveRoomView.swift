@@ -797,7 +797,7 @@ struct VideoHostView: UIViewRepresentable {
     }
 }
 
-// ===== ガイド無しで 1 枚だけ生写真を撮って UIImage を返す (セッション再利用) =====
+// ===== ガイド無しで 1 枚だけ写真を撮って UIImage を返す (セッション再利用) =====
 final class SingleShotCapturer: NSObject, AVCapturePhotoCaptureDelegate {
     private let session = AVCaptureSession()
     private let output = AVCapturePhotoOutput()
@@ -973,272 +973,19 @@ struct LiveRoomView: View {
         return UIImage(named: photoAssets[selectedGuideIndex])
     }
 
+    // ===== body =====
     var body: some View {
         ZStack {
-            // ===== 映像レイヤ =====
-            if isConnected {
-                if role == .photographer, let lt = localTrack {
-                    VideoHostView(track: lt, contentMode: .scaleAspectFit)
-                        .ignoresSafeArea()
-                } else if role == .subject, let rt = remoteTrack {
-                    VideoHostView(track: rt, contentMode: .scaleAspectFit)
-                        .ignoresSafeArea()
-                } else {
-                    Color.black.ignoresSafeArea()
-                        .overlay(Text("映像を待っています").foregroundColor(.white))
-                }
-            } else {
-                Color.gray.opacity(0.3).ignoresSafeArea()
-                    .overlay(Text("接続中...").foregroundColor(.black))
-            }
-
-            // ===== ガイド重畳（両者に表示） =====
-            if let g = guideImage {
-                Image(uiImage: g)
-                    .resizable()
-                    .scaledToFit()
-                    .opacity(guideOpacity)
-                    .scaleEffect(effScale)
-                    .rotationEffect(effRotation)
-                    .offset(effOffset)
-                    .allowsHitTesting(role == .subject) // 被写体のみ操作可
-                    .gesture(role == .subject ? subjectTransformGestures() : nil)
-            }
-
-            // ===== 撮影者 UI：カメラ切替＋シャッター =====
-            if role == .photographer {
-                // 右下：カメラ切替
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        Button {
-                            Task { await switchCamera(camPos == .front ? .back : .front) }
-                        } label: {
-                            Image(systemName: "arrow.triangle.2.circlepath.camera")
-                                .font(.system(size: 20, weight: .semibold))
-                                .foregroundColor(.black)
-                                .frame(width: 56, height: 56)
-                                .background(.white)
-                                .clipShape(Circle())
-                                .shadow(radius: 6, y: 2)
-                        }
-                        .padding(.trailing, 20)
-                        .padding(.bottom, 120)
-                    }
-                }
-                .ignoresSafeArea()
-
-                // 下中央：シャッター（ガイド無し保存）
-                VStack {
-                    Spacer()
-                    Button {
-                        Task { await captureWithAVFoundation() }
-                    } label: {
-                        ZStack {
-                            Circle().fill(Color.white.opacity(0.92)).frame(width: 72, height: 72)
-                            Circle().stroke(Color.white, lineWidth: 3).frame(width: 84, height: 84)
-                        }
-                    }
-                    .padding(.bottom, 24)
-                }
-                .ignoresSafeArea()
-            }
-
-            // ===== 被写体 UI：左下に「選択トグル」、右下に「確定」 =====
-            if role == .subject {
-                VStack {
-                    Spacer()
-                    HStack {
-                        // 左下：トグル
-                        Button {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
-                                showGuidePicker.toggle()
-                            }
-                        } label: {
-                            Image(systemName: "photo.on.rectangle")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundColor(.black)
-                                .frame(width: 48, height: 48)
-                                .background(.white)
-                                .clipShape(Circle())
-                                .shadow(radius: 6, y: 2)
-                                .overlay(
-                                    Group {
-                                        if showGuidePicker {
-                                            Circle().stroke(Color.blue, lineWidth: 2)
-                                        }
-                                    }
-                                )
-                        }
-                        .padding(.leading, 20)
-
-                        Spacer()
-
-                        // 右下：確定
-                        Button {
-                            Task { await confirmGuideSync() }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "checkmark.circle.fill")
-                                Text("確定")
-                                    .fontWeight(.semibold)
-                            }
-                            .font(.system(size: 16))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(Color.blue)
-                            .clipShape(Capsule())
-                            .shadow(radius: 6, y: 2)
-                        }
-                        .padding(.trailing, 20)
-                    }
-                    .padding(.bottom, 100)
-                }
-                .ignoresSafeArea()
-            }
-
-            // 送信完了トースト
-            if showSentToast {
-                VStack {
-                    Spacer()
-                    Text("撮影者にガイドを送信しました")
-                        .font(.callout)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(.ultraThinMaterial)
-                        .clipShape(Capsule())
-                        .padding(.bottom, 40)
-                }
-                .transition(.opacity)
-            }
-
-            if let errorMessage {
-                VStack { Spacer(); Text(errorMessage).foregroundColor(.red).padding() }
-            }
+            Color.black.ignoresSafeArea()
+            previewArea
+            photographerUI
+            subjectUI
+            toastAndError
         }
-        // 左上オーバーレイ：room名＋撮影者側のみ受信ログ表示
-        .overlay(alignment: .topLeading) {
-            if role == .photographer {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("room: \(room.name ?? "-")")
-                        .font(.caption)
-                        .padding(6)
-                        .background(Color.black.opacity(0.4))
-                        .foregroundColor(.white)
-                        .cornerRadius(6)
-
-                    if lastRxLog != "-" {
-                        Text(lastRxLog)
-                            .font(.caption2)
-                            .padding(6)
-                            .background(Color.black.opacity(0.35))
-                            .foregroundColor(.white)
-                            .cornerRadius(6)
-                    }
-                }
-                .padding(EdgeInsets(top: 56, leading: 16, bottom: 16, trailing: 16))
-            } else {
-                Text("room: \(room.name ?? "-")")
-                    .font(.caption)
-                    .padding(6)
-                    .background(Color.black.opacity(0.4))
-                    .foregroundColor(.white)
-                    .cornerRadius(6)
-                    .padding(EdgeInsets(top: 56, leading: 16, bottom: 16, trailing: 16))
-            }
-        }
-        // 右上：お手本写真プレビュー
-        .overlay(alignment: .topTrailing) {
-            if let ref = referenceImage {
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("お手本")
-                        .font(.caption2)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.black.opacity(0.5))
-                        .clipShape(Capsule())
-
-                    Image(uiImage: ref)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 120)
-                        .background(Color.black.opacity(0.6))
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.white.opacity(0.8), lineWidth: 1)
-                        )
-                        .shadow(radius: 4, y: 2)
-                }
-                .padding(EdgeInsets(top: 64, leading: 16, bottom: 16, trailing: 16))
-            }
-        }
-        // 透過度スライダ（両役とも上固定）
-        .safeAreaInset(edge: .top) {
-            HStack {
-                Image(systemName: "square.on.square.dashed")
-                Slider(value: Binding(get: {
-                    guideOpacity
-                }, set: { v in
-                    guideOpacity = v
-                }), in: 0.0...1.0)
-                .frame(maxWidth: 260)
-                Text(String(format: "%.0f%%", guideOpacity * 100))
-                    .monospacedDigit()
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(.ultraThinMaterial)
-            .clipShape(Capsule())
-            .padding(.top, 6)
-        }
-        // 被写体のサムネトレイ（必要時のみ）
-        .safeAreaInset(edge: .bottom) {
-            if role == .subject && showGuidePicker {
-                HStack(spacing: 10) {
-                    ForEach(0..<photoAssets.count, id: \.self) { idx in
-                        Button {
-                            Task {
-                                await selectGuide(index: idx) // 送信はしない、ローカルのみ
-                                withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
-                                    showGuidePicker = false
-                                }
-                            }
-                        } label: {
-                            let img = UIImage(named: photoAssets[idx])
-                            ZStack {
-                                if let ii = img {
-                                    Image(uiImage: ii)
-                                        .resizable()
-                                        .scaledToFill()
-                                        .frame(width: 64, height: 64)
-                                        .clipped()
-                                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white, lineWidth: 1))
-                                } else {
-                                    Color.black.opacity(0.2)
-                                        .frame(width: 64, height: 64)
-                                        .overlay(Text("\(idx+1)").foregroundColor(.white))
-                                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white, lineWidth: 1))
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(idx == selectedGuideIndex ? Color.blue : Color.clear, lineWidth: 3)
-                        )
-                    }
-                }
-                .padding(10)
-                .background(.ultraThinMaterial)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .padding(.bottom, 64)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
+        .overlay(roomInfoOverlay, alignment: .topLeading)
+        .overlay(referenceOverlay, alignment: .topTrailing)
+        .safeAreaInset(edge: .top) { opacitySlider }
+        .safeAreaInset(edge: .bottom) { guideTray }
         .task {
             await connectToRoom(
                 roomName: roomName,
@@ -1247,6 +994,334 @@ struct LiveRoomView: View {
         }
         .onDisappear {
             Task { await room.disconnect() }
+        }
+    }
+
+    // ===== 4:3 プレビュー部分 =====
+    @ViewBuilder
+    private var previewArea: some View {
+        GeometryReader { geo in
+            let screenSize = geo.size
+            let containerSize = containerSizeFor4to3(screenSize: screenSize)
+
+            ZStack {
+                // 映像レイヤ
+                if isConnected {
+                    if role == .photographer, let lt = localTrack {
+                        VideoHostView(track: lt, contentMode: .scaleAspectFit)
+                            .clipped()
+                    } else if role == .subject, let rt = remoteTrack {
+                        VideoHostView(track: rt, contentMode: .scaleAspectFit)
+                            .clipped()
+                    } else {
+                        Color.black
+                            .overlay(
+                                Text("映像を待っています")
+                                    .foregroundColor(.white)
+                            )
+                    }
+                } else {
+                    Color.gray.opacity(0.3)
+                        .overlay(
+                            Text("接続中...")
+                                .foregroundColor(.black)
+                        )
+                }
+
+                // ガイド
+                if let g = guideImage {
+                    Image(uiImage: g)
+                        .resizable()
+                        .scaledToFit()
+                        .opacity(guideOpacity)
+                        .scaleEffect(effScale)
+                        .rotationEffect(effRotation)
+                        .offset(effOffset)
+                        .allowsHitTesting(role == .subject)
+                        .gesture(role == .subject ? subjectTransformGestures() : nil)
+                }
+            }
+            .frame(width: containerSize.width, height: containerSize.height)
+            .position(x: screenSize.width / 2, y: screenSize.height / 2)
+        }
+    }
+
+    private func containerSizeFor4to3(screenSize: CGSize) -> CGSize {
+        // targetRatio = width / height = 3:4
+        let targetRatio: CGFloat = 3.0 / 4.0
+        let screenRatio = screenSize.width / screenSize.height
+
+        if screenRatio > targetRatio {
+            // 画面の方が横長 => 高さ基準
+            let h = screenSize.height
+            let w = h * targetRatio
+            return CGSize(width: w, height: h)
+        } else {
+            // 画面の方が縦長 or ちょうど => 幅基準
+            let w = screenSize.width
+            let h = w / targetRatio
+            return CGSize(width: w, height: h)
+        }
+    }
+
+    // ===== 撮影者 UI =====
+    @ViewBuilder
+    private var photographerUI: some View {
+        if role == .photographer {
+            // 右下：カメラ切替
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    Button {
+                        Task { await switchCamera(camPos == .front ? .back : .front) }
+                    } label: {
+                        Image(systemName: "arrow.triangle.2.circlepath.camera")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundColor(.black)
+                            .frame(width: 56, height: 56)
+                            .background(.white)
+                            .clipShape(Circle())
+                            .shadow(radius: 6, y: 2)
+                    }
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 120)
+                }
+            }
+            .ignoresSafeArea()
+
+            // 下中央：シャッター（ガイド無し保存）
+            VStack {
+                Spacer()
+                Button {
+                    Task { await captureWithAVFoundation() }
+                } label: {
+                    ZStack {
+                        Circle().fill(Color.white.opacity(0.92)).frame(width: 72, height: 72)
+                        Circle().stroke(Color.white, lineWidth: 3).frame(width: 84, height: 84)
+                    }
+                }
+                .padding(.bottom, 24)
+            }
+            .ignoresSafeArea()
+        }
+    }
+
+    // ===== 被写体 UI =====
+    @ViewBuilder
+    private var subjectUI: some View {
+        if role == .subject {
+            VStack {
+                Spacer()
+                HStack {
+                    // 左下：トグル
+                    Button {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
+                            showGuidePicker.toggle()
+                        }
+                    } label: {
+                        Image(systemName: "photo.on.rectangle")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(.black)
+                            .frame(width: 48, height: 48)
+                            .background(.white)
+                            .clipShape(Circle())
+                            .shadow(radius: 6, y: 2)
+                            .overlay(
+                                Group {
+                                    if showGuidePicker {
+                                        Circle().stroke(Color.blue, lineWidth: 2)
+                                    }
+                                }
+                            )
+                    }
+                    .padding(.leading, 20)
+
+                    Spacer()
+
+                    // 右下：確定
+                    Button {
+                        Task { await confirmGuideSync() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle.fill")
+                            Text("確定")
+                                .fontWeight(.semibold)
+                        }
+                        .font(.system(size: 16))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Color.blue)
+                        .clipShape(Capsule())
+                        .shadow(radius: 6, y: 2)
+                    }
+                    .padding(.trailing, 20)
+                }
+                .padding(.bottom, 100)
+            }
+            .ignoresSafeArea()
+        }
+    }
+
+    // ===== トーストとエラー =====
+    @ViewBuilder
+    private var toastAndError: some View {
+        if showSentToast {
+            VStack {
+                Spacer()
+                Text("撮影者にガイドを送信しました")
+                    .font(.callout)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                    .padding(.bottom, 40)
+            }
+            .transition(.opacity)
+        }
+
+        if let errorMessage {
+            VStack {
+                Spacer()
+                Text(errorMessage)
+                    .foregroundColor(.red)
+                    .padding()
+            }
+        }
+    }
+
+    // ===== 左上 room 情報オーバーレイ =====
+    @ViewBuilder
+    private var roomInfoOverlay: some View {
+        if role == .photographer {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("room: \(room.name ?? "-")")
+                    .font(.caption)
+                    .padding(6)
+                    .background(Color.black.opacity(0.4))
+                    .foregroundColor(.white)
+                    .cornerRadius(6)
+
+                if lastRxLog != "-" {
+                    Text(lastRxLog)
+                        .font(.caption2)
+                        .padding(6)
+                        .background(Color.black.opacity(0.35))
+                        .foregroundColor(.white)
+                        .cornerRadius(6)
+                }
+            }
+            .padding(EdgeInsets(top: 56, leading: 16, bottom: 16, trailing: 16))
+        } else {
+            Text("room: \(room.name ?? "-")")
+                .font(.caption)
+                .padding(6)
+                .background(Color.black.opacity(0.4))
+                .foregroundColor(.white)
+                .cornerRadius(6)
+                .padding(EdgeInsets(top: 56, leading: 16, bottom: 16, trailing: 16))
+        }
+    }
+
+    // ===== 右上 お手本プレビュー =====
+    @ViewBuilder
+    private var referenceOverlay: some View {
+        if let ref = referenceImage {
+            VStack(alignment: .trailing, spacing: 4) {
+                Text("お手本")
+                    .font(.caption2)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.black.opacity(0.5))
+                    .clipShape(Capsule())
+
+                Image(uiImage: ref)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 120)
+                    .background(Color.black.opacity(0.6))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.white.opacity(0.8), lineWidth: 1)
+                    )
+                    .shadow(radius: 4, y: 2)
+            }
+            .padding(EdgeInsets(top: 64, leading: 16, bottom: 16, trailing: 16))
+        }
+    }
+
+    // ===== 上部 透過度スライダ =====
+    private var opacitySlider: some View {
+        HStack {
+            Image(systemName: "square.on.square.dashed")
+            Slider(value: Binding(get: {
+                guideOpacity
+            }, set: { v in
+                guideOpacity = v
+            }), in: 0.0...1.0)
+            .frame(maxWidth: 260)
+            Text(String(format: "%.0f%%", guideOpacity * 100))
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial)
+        .clipShape(Capsule())
+        .padding(.top, 6)
+    }
+
+    // ===== 下部 サムネトレイ =====
+    @ViewBuilder
+    private var guideTray: some View {
+        if role == .subject && showGuidePicker {
+            HStack(spacing: 10) {
+                ForEach(0..<photoAssets.count, id: \.self) { idx in
+                    Button {
+                        Task {
+                            await selectGuide(index: idx) // 送信はしない、ローカルのみ
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
+                                showGuidePicker = false
+                            }
+                        }
+                    } label: {
+                        let img = UIImage(named: photoAssets[idx])
+                        ZStack {
+                            if let ii = img {
+                                Image(uiImage: ii)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 64, height: 64)
+                                    .clipped()
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(Color.white, lineWidth: 1)
+                                    )
+                            } else {
+                                Color.black.opacity(0.2)
+                                    .frame(width: 64, height: 64)
+                                    .overlay(Text("\(idx+1)").foregroundColor(.white))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(Color.white, lineWidth: 1)
+                                    )
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(idx == selectedGuideIndex ? Color.blue : Color.clear, lineWidth: 3)
+                    )
+                }
+            }
+            .padding(10)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .padding(.bottom, 64)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }
 
