@@ -30,7 +30,7 @@ struct ContentView: View {
             .navigationDestination(isPresented: $go) {
                 LiveRoomView(role: role, roomName: roomName)
             }
-            .navigationTitle("PoseGuide デモ")
+            .navigationTitle("協力撮影 デモ")
         }
     }
 }
