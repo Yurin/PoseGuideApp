@@ -1,481 +1,3 @@
-//import SwiftUI
-//import LiveKit
-//import Photos
-//
-//struct LiveRoomView: View {
-//    let role: UserRole
-//    let roomName: String
-//
-//    @StateObject private var room = Room()
-//
-//    @State private var isConnected = false
-//    @State private var errorMessage: String?
-//
-//    // 二重接続防止
-//    @State private var didStartConnect = false
-//
-//    // 映像
-//    @State private var remoteTrack: VideoTrack?
-//    @State private var localTrack: LocalVideoTrack?
-//    @State private var localPub: LocalTrackPublication?
-//
-//    // ガイド
-//    @State private var guideFrame: UIImage? = UIImage(named: "pose_guide1_silhouette")
-//    @State private var guide = GuideState()
-//    @State private var guideLocked = false
-//
-//    // 被写体 ジェスチャ一時値
-//    @State private var lastScale: CGFloat = 1.0
-//    @State private var lastOffset: CGSize = .zero
-//
-//    // 撮影者 カメラ向き
-//    enum CamPos { case front, back }
-//    @State private var camPos: CamPos = .front
-//
-//    // 参加者 SID のトラッキング（任意のデバッグ用）
-//    @State private var remoteSids: Set<Participant.Sid> = []
-//
-//    private let eventProxy = RoomEventProxy()
-//
-//    var body: some View {
-//        ZStack {
-//            // ===== 映像レイヤー =====
-//            if isConnected {
-//                if role == .subject, let t = remoteTrack {
-//                    LKVideoView(track: t, contentMode: .scaleAspectFit)
-//                        .ignoresSafeArea()
-//                } else if role == .photographer, let lt = localTrack {
-//                    LKVideoView(track: lt, contentMode: .scaleAspectFit)
-//                        .ignoresSafeArea()
-//                } else {
-//                    Color.black.ignoresSafeArea()
-//                        .overlay(Text("映像を待っています").foregroundColor(.white))
-//                }
-//            } else {
-//                Color.gray.opacity(0.3).ignoresSafeArea()
-//                    .overlay(Text("接続中...").foregroundColor(.black))
-//            }
-//
-//            // ===== ガイド（両者表示。編集は被写体のみ、ロックで無効化） =====
-//            if let frame = guideFrame {
-//                Image(uiImage: frame)
-//                    .resizable()
-//                    .scaledToFit()
-//                    .scaleEffect(CGFloat(guide.scale))
-//                    .opacity(guide.opacity)
-//                    .offset(x: CGFloat(guide.offsetX), y: CGFloat(guide.offsetY))
-//                    .allowsHitTesting(role == .subject && !guideLocked)
-//                    .gesture(role == .subject && !guideLocked ? guideGestures : nil)
-//                    .animation(.easeInOut(duration: 0.15), value: guideLocked)
-//                    .animation(.easeInOut(duration: 0.15), value: guide)
-//            }
-//
-//            // ===== 被写体 UI（確定） =====
-//            if role == .subject {
-//                VStack {
-//                    Spacer()
-//                    HStack {
-//                        Spacer()
-//                        Button(guideLocked ? "確定済み" : "確定") {
-//                            print("[UI] Lock button tapped")
-//                            Task { await sendGuide(.lock) }
-//                        }
-//                        .buttonStyle(.borderedProminent)
-//                        .disabled(guideLocked)
-//                    }
-//                    .padding()
-//                    .background(Color.black.opacity(0.5))
-//                    .cornerRadius(14)
-//                    .padding(.bottom, 20)
-//                }
-//            }
-//
-//            // ===== 撮影者 UI（右下カメラ切替、ロック後はシャッター） =====
-//            if role == .photographer {
-//                VStack {
-//                    Spacer()
-//                    HStack {
-//                        Spacer()
-//                        Button {
-//                            print("[UI] Camera switch tapped (current: \(camPos == .front ? "front" : "back"))")
-//                            Task { await switchCamera(camPos == .front ? .back : .front) }
-//                        } label: {
-//                            Image(systemName: "arrow.triangle.2.circlepath.camera")
-//                                .font(.system(size: 20, weight: .semibold))
-//                                .foregroundColor(.black)
-//                                .frame(width: 56, height: 56)
-//                                .background(.white)
-//                                .clipShape(Circle())
-//                                .shadow(radius: 6, y: 2)
-//                        }
-//                        .padding(.trailing, 20)
-//                        .padding(.bottom, guideLocked ? 110 : 24)
-//                    }
-//                }
-//                .ignoresSafeArea()
-//
-//                if guideLocked {
-//                    VStack {
-//                        Spacer()
-//                        Button {
-//                            print("[UI] Shutter tapped")
-//                            Task { await captureAndSaveCurrentFrame() }
-//                        } label: {
-//                            ZStack {
-//                                Circle().fill(Color.white.opacity(0.9)).frame(width: 72, height: 72)
-//                                Circle().stroke(Color.white, lineWidth: 3).frame(width: 84, height: 84)
-//                            }
-//                        }
-//                        .padding(.bottom, 28)
-//                    }
-//                    .ignoresSafeArea()
-//                }
-//            }
-//
-//            if let errorMessage {
-//                VStack { Spacer(); Text(errorMessage).foregroundColor(.red).padding() }
-//            }
-//        }
-//        // 画面左上に実際の room.name を常時表示
-//        .overlay(alignment: .topLeading) {
-//            Text("room: \(room.name ?? "-")")
-//                .font(.caption)
-//                .padding(6)
-//                .background(Color.black.opacity(0.4))
-//                .foregroundColor(.white)
-//                .cornerRadius(6)
-//                .padding()
-//        }
-//        // 二重接続防止
-//        .task {
-//            guard !didStartConnect else { return }
-//            didStartConnect = true
-//            print("[TASK] connectToRoom start role=\(role == .photographer ? "photographer" : "subject") room=\(roomName)")
-//            await connectToRoom(
-//                roomName: roomName,
-//                identity: role == .photographer ? "photographer" : "subject"
-//            )
-//        }
-//        .onDisappear {
-//            Task { await room.disconnect() }
-//        }
-//        .onChange(of: guideLocked) { locked in
-//            print("[STATE] guideLocked -> \(locked)")
-//        }
-//    }
-//
-//    // MARK: - ジェスチャ（被写体）
-//    private var guideGestures: some Gesture {
-//        SimultaneousGesture(
-//            DragGesture()
-//                .onChanged { v in
-//                    guide.offsetX = Double(lastOffset.width + v.translation.width)
-//                    guide.offsetY = Double(lastOffset.height + v.translation.height)
-//                    Task { await sendGuide(.update) }
-//                }
-//                .onEnded { _ in
-//                    lastOffset = CGSize(width: CGFloat(guide.offsetX), height: CGFloat(guide.offsetY))
-//                    print("[GESTURE] drag ended offset=(\(guide.offsetX), \(guide.offsetY))")
-//                },
-//            MagnificationGesture()
-//                .onChanged { value in
-//                    guide.scale = Double(lastScale * value)
-//                    Task { await sendGuide(.update) }
-//                }
-//                .onEnded { _ in
-//                    lastScale = CGFloat(guide.scale)
-//                    print("[GESTURE] magnify ended scale=\(guide.scale)")
-//                }
-//        )
-//    }
-//
-//    // MARK: - 接続処理
-//    @MainActor
-//    func connectToRoom(roomName: String, identity: String) async {
-//        let tokenURL = "http://192.168.50.233:3000/token?roomName=\(roomName)&identity=\(identity)"
-//        guard let url = URL(string: tokenURL) else {
-//            print("[CONNECT][ERR] token URL invalid:", tokenURL)
-//            return
-//        }
-//
-//        do {
-//            print("[TOKEN] GET \(tokenURL)")
-//            let (data, _) = try await URLSession.shared.data(from: url)
-//
-//            if let jsonStr = String(data: data, encoding: .utf8) {
-//                print("[TOKEN RAW] \(jsonStr)")
-//            }
-//
-//            let result = try JSONDecoder().decode([String: String].self, from: data)
-//            guard let token = result["token"] else { throw URLError(.badServerResponse) }
-//            print("[CONNECT] token fetched (len=\(token.count)) for room=\(roomName) identity=\(identity)")
-//
-//            // 接続前に delegate を登録
-//            room.removeAllDelegates()
-//
-//            // Remote 映像
-//            eventProxy.onRemoteVideo = { v in
-//                self.remoteTrack = v
-//                print("[Proxy->View] remote video set:", v.name)
-//            }
-//
-//            // DataChannel
-//            eventProxy.onDataMessage = { data, participant, topic in
-//                let fromStr = String(describing: participant?.identity)
-//                print("[Proxy->View] onDataMessage bytes=\(data.count) topic=\(topic ?? "(nil)") from=\(fromStr)")
-//                self.handleIncomingData(data)
-//            }
-//
-//            // リモート参加者出入り（デバッグ）
-//            eventProxy.onRemoteConnected = { (rp: RemoteParticipant) in
-//                if let sid = rp.sid {
-//                    self.remoteSids.insert(sid)
-//                    let idStr = String(describing: rp.identity)
-//                    print("[SID] remote connected sid=\(sid) id=\(idStr) sids=\(self.remoteSids)")
-//                } else {
-//                    let idStr = String(describing: rp.identity)
-//                    print("[SID] remote connected (sid=nil) id=\(idStr)")
-//                }
-//                // 念のためここでも ParticipantDelegate を付与（room delegate 内でも付けている）
-//                rp.add(delegate: self.eventProxy)
-//            }
-//
-//            eventProxy.onRemoteDisconnected = { (rp: RemoteParticipant) in
-//                if let sid = rp.sid {
-//                    self.remoteSids.remove(sid)
-//                    let idStr = String(describing: rp.identity)
-//                    print("[SID] remote disconnected sid=\(sid) id=\(idStr) sids=\(self.remoteSids)")
-//                } else {
-//                    let idStr = String(describing: rp.identity)
-//                    print("[SID] remote disconnected (sid=nil) id=\(idStr)")
-//                }
-//            }
-//
-//            room.add(delegate: eventProxy)
-//            print("[CONNECT] Proxy added")
-//
-//            // 既存のリモート参加者へ ParticipantDelegate を付与（再入室ケースなど）
-//            for (_, rp) in room.remoteParticipants {
-//                rp.add(delegate: eventProxy)
-//                print("[CONNECT] attached ParticipantDelegate to existing:", String(describing: rp.identity))
-//            }
-//
-//            // 接続
-//            let connectOptions = ConnectOptions(autoSubscribe: true)
-//            try await room.connect(
-//                url: "wss://poseguideapp-u7p300v5.livekit.cloud",
-//                token: token,
-//                connectOptions: connectOptions
-//            )
-//            print("[CONNECT] connected to room:", String(describing: room.name))
-//            isConnected = true
-//
-//            // 接続完了後も付け直し（堅牢化）
-//            for (_, rp) in room.remoteParticipants {
-//                rp.add(delegate: eventProxy)
-//                print("[CONNECT] re-attached ParticipantDelegate after connect:", String(describing: rp.identity))
-//            }
-//
-//            // 既存公開済みを拾う
-//            attachExistingRemoteIfAny()
-//
-//            // subject は接続完了後に一度現在の状態を送って同期
-//            if identity == "subject" {
-//                Task { await sendGuide(.update) }
-//            }
-//
-//            // 撮影者のみカメラ publish
-//            if identity == "photographer" {
-//                try await publishCamera(position: camPos)
-//            }
-//
-//        } catch {
-//            print("[CONNECT][ERR] \(error)")
-//            errorMessage = "接続に失敗しました"
-//        }
-//    }
-//
-//    @MainActor
-//    private func attachExistingRemoteIfAny() {
-//        for (_, rp) in room.remoteParticipants {
-//            for pub in rp.videoTracks {
-//                if let t = pub.track as? VideoTrack {
-//                    self.remoteTrack = t
-//                    print("[REMOTE] attached existing remote video:", t.name, "pub:", pub.sid)
-//                    return
-//                }
-//            }
-//        }
-//        print("[REMOTE] no existing remote video found")
-//    }
-//
-//    // MARK: - DataChannel 送受信（被写体→撮影者）
-//    @MainActor
-//    private func sendGuide(_ type: GuideEventType) async {
-//        guard role == .subject else { return }
-//
-//        let msg = GuideMessage(type: type, state: guide, roomName: roomName)
-//
-//        do {
-//            let data = try JSONEncoder().encode(msg)
-//
-//            // LiveKit iOS 2.8.1: DataPublishOptions はイミュータブル。
-//            // 宛先指定(destination)は未対応なので、まずはブロードキャストで確実に届ける。
-//            let opt = DataPublishOptions(topic: "guide", reliable: true)
-//
-//            // デバッグ用に現在のリモート参加者一覧を出す（sid は Optional なので安全に表示）
-//            let remoteList = room.remoteParticipants.values.map { rp in
-//                let idStr = String(describing: rp.identity)
-//                let sidStr = rp.sid.map { "\($0)" } ?? "(nil)"
-//                return "[id=\(idStr) sid=\(sidStr)]"
-//            }.joined(separator: ", ")
-//            print("[SEND] type=\(type) bytes=\(data.count) topic=\(opt.topic ?? "(nil)") reliable=\(opt.reliable) remotes=\(remoteList)")
-//
-//            try await room.localParticipant.publish(data: data, options: opt)
-//            print("[SEND] ok type=\(type)")
-//
-//            if type == .lock {
-//                guideLocked = true
-//                print("[SEND] local guideLocked set true (subject)")
-//            }
-//        } catch {
-//            print("[SEND][ERR] \(error)")
-//        }
-//    }
-//
-//
-//
-//    @MainActor
-//    private func handleIncomingData(_ data: Data) {
-//        print("[RECV] raw bytes=\(data.count)")
-//
-//        // ★ まず“届いたか”だけ確認：届いたら即ロック表示
-//        if role == .photographer {
-//            self.guideLocked = true
-//        }
-//
-//        do {
-//            let msg = try JSONDecoder().decode(GuideMessage.self, from: data)
-//            print("[RECV] decoded type=\(msg.type) room=\(msg.roomName)")
-//            if role == .photographer {
-//                self.guide = msg.state
-//                if msg.type == .lock {
-//                    self.guideLocked = true
-//                    print("[RECV] guide locked by subject -> guideLocked=true")
-//                }
-//            } else {
-//                print("[RECV] message on subject side (ignored)")
-//            }
-//        } catch {
-//            print("[RECV][ERR] decode failed:", error.localizedDescription)
-//        }
-//    }
-//
-//
-//
-//    // MARK: - カメラ制御（撮影者）
-//    @MainActor
-//    private func publishCamera(position: CamPos) async throws {
-//        if let track = localTrack,
-//           let capturer = track.capturer as? CameraCapturer {
-//            try await capturer.set(cameraPosition: position == .front ? .front : .back)
-//            camPos = position
-//            print("[CAMERA] switched (reuse track): \(position == .front ? "front" : "back")")
-//            return
-//        }
-//
-//        let options = CameraCaptureOptions(position: position == .front ? .front : .back)
-//        let cam = LocalVideoTrack.createCameraTrack(options: options)
-//        self.localTrack = cam
-//        let pub: LocalTrackPublication = try await room.localParticipant.publish(videoTrack: cam)
-//        self.localPub = pub
-//        camPos = position
-//        print("[CAMERA] published video (\(position == .front ? "front" : "back"))")
-//    }
-//
-//    @MainActor
-//    private func switchCamera(_ to: CamPos) async {
-//        guard role == .photographer else { return }
-//        if camPos == to { return }
-//        do {
-//            if let track = localTrack,
-//               let capturer = track.capturer as? CameraCapturer {
-//                try await capturer.set(cameraPosition: to == .front ? .front : .back)
-//                camPos = to
-//                print("[CAMERA] set position -> \(to == .front ? "front" : "back")")
-//            } else {
-//                try await publishCamera(position: to)
-//            }
-//        } catch {
-//            print("[CAMERA][ERR] \(error)")
-//            self.errorMessage = "カメラ切替に失敗しました"
-//        }
-//    }
-//
-//    // 撮影（撮影者・確定後のみ）
-//    @MainActor
-//    private func captureAndSaveCurrentFrame() async {
-//        guard role == .photographer, guideLocked else {
-//            print("[SNAPSHOT] guard failed role=\(role == .photographer ? "photographer" : "subject") locked=\(guideLocked)")
-//            return
-//        }
-//
-//        let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
-//        if status == .notDetermined {
-//            print("[SNAPSHOT] request photo addOnly permission")
-//            _ = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-//        }
-//        guard PHPhotoLibrary.authorizationStatus(for: .addOnly) == .authorized else {
-//            print("[SNAPSHOT][ERR] not authorized for addOnly")
-//            self.errorMessage = "写真への保存が許可されていません（設定で許可してください）"
-//            return
-//        }
-//
-//        let renderer = ImageRenderer(content: snapshotContentView)
-//        renderer.scale = UIScreen.main.scale
-//
-//        if let uiImage = renderer.uiImage {
-//            PHPhotoLibrary.shared().performChanges({
-//                PHAssetChangeRequest.creationRequestForAsset(from: uiImage)
-//            }) { success, err in
-//                Task { @MainActor in
-//                    if success {
-//                        print("[SNAPSHOT] saved to library")
-//                    } else {
-//                        print("[SNAPSHOT][ERR] \(err?.localizedDescription ?? "unknown")")
-//                        self.errorMessage = "保存に失敗しました"
-//                    }
-//                }
-//            }
-//        } else {
-//            print("[SNAPSHOT][ERR] renderer.uiImage nil")
-//            self.errorMessage = "撮影に失敗しました"
-//        }
-//    }
-//
-//    @ViewBuilder
-//    private var snapshotContentView: some View {
-//        ZStack {
-//            if role == .subject, let t = remoteTrack {
-//                LKVideoView(track: t, contentMode: .scaleAspectFit)
-//            } else if role == .photographer, let lt = localTrack {
-//                LKVideoView(track: lt, contentMode: .scaleAspectFit)
-//            } else { Color.black }
-//
-//            if let frame = guideFrame {
-//                Image(uiImage: frame)
-//                    .resizable()
-//                    .scaledToFit()
-//                    .scaleEffect(CGFloat(guide.scale))
-//                    .opacity(guide.opacity)
-//                    .offset(x: CGFloat(guide.offsetX), y: CGFloat(guide.offsetY))
-//        }
-//        }
-//        .frame(maxWidth: .infinity, maxHeight: .infinity)
-//        .ignoresSafeArea()
-//    }
-//}
-
 import SwiftUI
 import LiveKit
 import AVFoundation
@@ -512,7 +34,6 @@ final class SingleShotCapturer: NSObject, AVCapturePhotoCaptureDelegate {
         session.beginConfiguration()
         session.sessionPreset = .photo
 
-        // ← ここを default(_:for:position:) に修正
         guard
             let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position),
             let input = try? AVCaptureDeviceInput(device: device),
@@ -525,7 +46,9 @@ final class SingleShotCapturer: NSObject, AVCapturePhotoCaptureDelegate {
         session.addInput(input)
 
         guard session.canAddOutput(output) else {
-            session.commitConfiguration(); completion(nil); return
+            session.commitConfiguration()
+            completion(nil)
+            return
         }
         session.addOutput(output)
         output.isHighResolutionCaptureEnabled = true
@@ -560,6 +83,19 @@ final class SingleShotCapturer: NSObject, AVCapturePhotoCaptureDelegate {
     }
 }
 
+// ===== 同期用モデル =====
+struct GuideTransform: Codable, Equatable {
+    var scale: CGFloat = 1.0
+    var offsetX: CGFloat = 0.0
+    var offsetY: CGFloat = 0.0
+    var rotation: CGFloat = 0.0 // ラジアン
+}
+
+struct GuidePayload: Codable, Equatable {
+    var index: Int
+    var transform: GuideTransform
+}
+
 // ===== ここから本体 =====
 struct LiveRoomView: View {
 
@@ -571,6 +107,7 @@ struct LiveRoomView: View {
     @StateObject private var room = Room()
     @State private var isConnected = false
     @State private var errorMessage: String?
+    @State private var roomDelegate: MinimalRoomDelegate? // 強参照保持が必須
 
     // 映像
     @State private var remoteTrack: VideoTrack?
@@ -581,12 +118,64 @@ struct LiveRoomView: View {
     enum CamPos { case front, back }
     @State private var camPos: CamPos = .front
 
-    // ガイド（不透明度のみ調整）
+    // データチャンネル
+    private let guideTopic = "guide-sync"
+
+    // 被写体が選ぶサムネ（写真）
+    private let photoAssets = [
+        "pose_guide1",
+        "pose_guide2",
+        "pose_guide3",
+        "pose_guide4"
+    ]
+
+    // 実際に重ねるフレーム（シルエット）
+    private let frameAssets = [
+        "pose_guide1_silhouette",
+        "pose_guide2_silhouette",
+        "pose_guide3_silhouette",
+        "pose_guide4_silhouette"
+    ]
+
+    @State private var selectedGuideIndex: Int = 0
     @State private var guideImage: UIImage? = UIImage(named: "pose_guide1_silhouette")
-    @State private var guide = GuideState() // opacity を利用
+
+    // 透過度（両者共通UI・上固定）
+    @State private var guideOpacity: CGFloat = 1.0
+
+    // ガイド変形（確定前の作業用と確定後の本体を分離）
+    @State private var baseTransform = GuideTransform()       // 確定済みの基準
+    @State private var workScale: CGFloat = 1.0               // ジェスチャ中の一時値
+    @State private var workOffset: CGSize = .zero
+    @State private var workRotation: Angle = .zero
+
+    // 被写体 UI
+    @State private var showGuidePicker = false
+    @State private var showSentToast = false
+
+    // 受信ログの簡易表示（撮影者側だけ）
+    @State private var lastRxLog: String = "-"
 
     // 生写真キャプチャ
     private let singleShot = SingleShotCapturer()
+
+    // 現在の見た目に効く合成変形
+    private var effScale: CGFloat { baseTransform.scale * workScale }
+    private var effRotation: Angle { Angle(radians: Double(baseTransform.rotation)) + workRotation }
+    private var effOffset: CGSize {
+        CGSize(width: baseTransform.offsetX + workOffset.width,
+               height: baseTransform.offsetY + workOffset.height)
+    }
+
+    // 現在の確定すべき状態
+    private var currentEffectiveTransform: GuideTransform {
+        var t = baseTransform
+        t.scale *= workScale
+        t.offsetX += workOffset.width
+        t.offsetY += workOffset.height
+        t.rotation += CGFloat(workRotation.radians)
+        return t
+    }
 
     var body: some View {
         ZStack {
@@ -607,37 +196,18 @@ struct LiveRoomView: View {
                     .overlay(Text("接続中...").foregroundColor(.black))
             }
 
-            // ===== ガイド重畳（両者に表示・不透明度だけ調整可） =====
+            // ===== ガイド重畳（両者に表示） =====
             if let g = guideImage {
                 Image(uiImage: g)
                     .resizable()
                     .scaledToFit()
-                    .opacity(guide.opacity)
-                    .allowsHitTesting(false)
-                    .animation(.easeInOut(duration: 0.15), value: guide.opacity)
+                    .opacity(guideOpacity)
+                    .scaleEffect(effScale)
+                    .rotationEffect(effRotation)
+                    .offset(effOffset)
+                    .allowsHitTesting(role == .subject) // 被写体のみ操作可
+                    .gesture(role == .subject ? subjectTransformGestures() : nil)
             }
-
-            // ===== 下部：ガイド不透明度スライダ（両者） =====
-            VStack {
-                Spacer()
-                HStack {
-                    Image(systemName: "square.on.square.dashed")
-                    Slider(value: Binding(get: {
-                        guide.opacity
-                    }, set: { v in
-                        guide.opacity = v
-                    }), in: 0.0...1.0)
-                    .frame(maxWidth: 240)
-                    Text(String(format: "%.0f%%", guide.opacity * 100))
-                        .monospacedDigit()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(.ultraThinMaterial)
-                .clipShape(Capsule())
-                .padding(.bottom, role == .photographer ? 110 : 24)
-            }
-            .ignoresSafeArea()
 
             // ===== 撮影者 UI：カメラ切替＋シャッター =====
             if role == .photographer {
@@ -658,7 +228,7 @@ struct LiveRoomView: View {
                                 .shadow(radius: 6, y: 2)
                         }
                         .padding(.trailing, 20)
-                        .padding(.bottom, 110)
+                        .padding(.bottom, 120)
                     }
                 }
                 .ignoresSafeArea()
@@ -679,18 +249,172 @@ struct LiveRoomView: View {
                 .ignoresSafeArea()
             }
 
+            // ===== 被写体 UI：左下に「選択トグル」、右下に「確定」 =====
+            if role == .subject {
+                VStack {
+                    Spacer()
+                    HStack {
+                        // 左下：トグル
+                        Button {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
+                                showGuidePicker.toggle()
+                            }
+                        } label: {
+                            Image(systemName: "photo.on.rectangle")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundColor(.black)
+                                .frame(width: 48, height: 48)
+                                .background(.white)
+                                .clipShape(Circle())
+                                .shadow(radius: 6, y: 2)
+                                .overlay(
+                                    Group {
+                                        if showGuidePicker {
+                                            Circle().stroke(Color.blue, lineWidth: 2)
+                                        }
+                                    }
+                                )
+                        }
+                        .padding(.leading, 20)
+
+                        Spacer()
+
+                        // 右下：確定
+                        Button {
+                            Task { await confirmGuideSync() }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "checkmark.circle.fill")
+                                Text("確定")
+                                    .fontWeight(.semibold)
+                            }
+                            .font(.system(size: 16))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(Color.blue)
+                            .clipShape(Capsule())
+                            .shadow(radius: 6, y: 2)
+                        }
+                        .padding(.trailing, 20)
+                    }
+                    .padding(.bottom, 100)
+                }
+                .ignoresSafeArea()
+            }
+
+            // 送信完了トースト
+            if showSentToast {
+                VStack {
+                    Spacer()
+                    Text("撮影者にガイドを送信しました")
+                        .font(.callout)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(.ultraThinMaterial)
+                        .clipShape(Capsule())
+                        .padding(.bottom, 40)
+                }
+                .transition(.opacity)
+            }
+
             if let errorMessage {
                 VStack { Spacer(); Text(errorMessage).foregroundColor(.red).padding() }
             }
         }
+        // 左上オーバーレイ：room名＋撮影者側のみ受信ログ表示
         .overlay(alignment: .topLeading) {
-            Text("room: \(room.name ?? "-")")
-                .font(.caption)
-                .padding(6)
-                .background(Color.black.opacity(0.4))
-                .foregroundColor(.white)
-                .cornerRadius(6)
-                .padding()
+            if role == .photographer {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("room: \(room.name ?? "-")")
+                        .font(.caption)
+                        .padding(6)
+                        .background(Color.black.opacity(0.4))
+                        .foregroundColor(.white)
+                        .cornerRadius(6)
+
+                    if lastRxLog != "-" {
+                        Text(lastRxLog)
+                            .font(.caption2)
+                            .padding(6)
+                            .background(Color.black.opacity(0.35))
+                            .foregroundColor(.white)
+                            .cornerRadius(6)
+                    }
+                }
+                .padding(EdgeInsets(top: 56, leading: 16, bottom: 16, trailing: 16))
+            } else {
+                Text("room: \(room.name ?? "-")")
+                    .font(.caption)
+                    .padding(6)
+                    .background(Color.black.opacity(0.4))
+                    .foregroundColor(.white)
+                    .cornerRadius(6)
+                    .padding(EdgeInsets(top: 56, leading: 16, bottom: 16, trailing: 16))
+            }
+        }
+        // 透過度スライダ（両役とも上固定）
+        .safeAreaInset(edge: .top) {
+            HStack {
+                Image(systemName: "square.on.square.dashed")
+                Slider(value: Binding(get: {
+                    guideOpacity
+                }, set: { v in
+                    guideOpacity = v
+                }), in: 0.0...1.0)
+                .frame(maxWidth: 260)
+                Text(String(format: "%.0f%%", guideOpacity * 100))
+                    .monospacedDigit()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.ultraThinMaterial)
+            .clipShape(Capsule())
+            .padding(.top, 6)
+        }
+        // 被写体のサムネトレイ（必要時のみ）
+        .safeAreaInset(edge: .bottom) {
+            if role == .subject && showGuidePicker {
+                HStack(spacing: 10) {
+                    ForEach(0..<photoAssets.count, id: \.self) { idx in
+                        Button {
+                            Task {
+                                await selectGuide(index: idx) // 送信はしない、ローカルのみ
+                                withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
+                                    showGuidePicker = false
+                                }
+                            }
+                        } label: {
+                            let img = UIImage(named: photoAssets[idx])
+                            ZStack {
+                                if let ii = img {
+                                    Image(uiImage: ii)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 64, height: 64)
+                                        .clipped()
+                                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white, lineWidth: 1))
+                                } else {
+                                    Color.black.opacity(0.2)
+                                        .frame(width: 64, height: 64)
+                                        .overlay(Text("\(idx+1)").foregroundColor(.white))
+                                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white, lineWidth: 1))
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(idx == selectedGuideIndex ? Color.blue : Color.clear, lineWidth: 3)
+                        )
+                    }
+                }
+                .padding(10)
+                .background(.ultraThinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .padding(.bottom, 64)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
         .task {
             await connectToRoom(
@@ -703,26 +427,85 @@ struct LiveRoomView: View {
         }
     }
 
-    // ===== 最小デリゲート（購読時に VideoTrack を拾うだけ） =====
+    // ===== 被写体の変形ジェスチャ（確定まで送信しない） =====
+    private func subjectTransformGestures() -> some Gesture {
+        let pinch = MagnificationGesture()
+            .onChanged { value in
+                workScale = value
+            }
+            .onEnded { value in
+                baseTransform.scale *= value
+                workScale = 1.0
+            }
+
+        let drag = DragGesture()
+            .onChanged { value in
+                workOffset = value.translation
+            }
+            .onEnded { value in
+                baseTransform.offsetX += value.translation.width
+                baseTransform.offsetY += value.translation.height
+                workOffset = .zero
+            }
+
+        let rotate = RotationGesture()
+            .onChanged { angle in
+                workRotation = angle
+            }
+            .onEnded { angle in
+                baseTransform.rotation += CGFloat(angle.radians)
+                workRotation = .zero
+            }
+
+        return SimultaneousGesture(SimultaneousGesture(pinch, drag), rotate)
+    }
+
+    // ===== デリゲート =====
     final class MinimalRoomDelegate: NSObject, RoomDelegate {
         private let onVideo: (VideoTrack) -> Void
-        init(onVideo: @escaping (VideoTrack) -> Void) {
+        private let onData: (Data, RemoteParticipant?, String) -> Void
+
+        init(onVideo: @escaping (VideoTrack) -> Void,
+             onData: @escaping (Data, RemoteParticipant?, String) -> Void) {
             self.onVideo = onVideo
+            self.onData = onData
         }
+
         func room(_ room: Room,
                   participant: RemoteParticipant,
                   didSubscribeTrack publication: RemoteTrackPublication,
                   track: Track) {
             if let v = track as? VideoTrack { onVideo(v) }
         }
+
+        // LiveKit 1.9 系の最新シグネチャ
+        func room(_ room: Room,
+                  participant: RemoteParticipant?,
+                  didReceiveData data: Data,
+                  forTopic topic: String,
+                  encryptionType: EncryptionType) {
+            onData(data, participant, topic)
+        }
+    }
+
+    // ===== カメラ有無チェック =====
+    private func hasCameraDevice() -> Bool {
+        let session = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.builtInWideAngleCamera, .builtInUltraWideCamera, .builtInTelephotoCamera],
+            mediaType: .video,
+            position: .unspecified
+        )
+        return !session.devices.isEmpty
     }
 
     // ===== 接続 =====
     @MainActor
     private func connectToRoom(roomName: String, identity: String) async {
-        let tokenURL = "http://172.30.57.208:3000/token?roomName=\(roomName)&identity=\(identity)"
+        // 実機から到達可能なIPv4に合わせて変更すること
+        let tokenURL = "http://192.168.50.92:3000/token?roomName=\(roomName)&identity=\(identity)"
         guard let url = URL(string: tokenURL) else {
-            print("[CONNECT][ERR] token URL invalid:", tokenURL); return
+            print("[CONNECT][ERR] token URL invalid:", tokenURL)
+            return
         }
 
         do {
@@ -733,11 +516,18 @@ struct LiveRoomView: View {
             print("[CONNECT] token fetched (len=\(token.count)) for room=\(roomName) identity=\(identity)")
 
             room.removeAllDelegates()
-            let delegate = MinimalRoomDelegate { v in
-                self.remoteTrack = v
-                print("[DELEGATE] subscribed remote video")
-            }
-            room.add(delegate: delegate)
+            let newDelegate = MinimalRoomDelegate(
+                onVideo: { v in
+                    self.remoteTrack = v
+                    print("[DELEGATE] subscribed remote video")
+                },
+                onData: { data, _, topic in
+                    print("[DATA] received topic:", topic, "bytes:", data.count)
+                    self.handleData(data, topic: topic)
+                }
+            )
+            self.roomDelegate = newDelegate // 強参照保持
+            room.add(delegate: newDelegate)
 
             let connectOptions = ConnectOptions(autoSubscribe: true)
             try await room.connect(
@@ -749,9 +539,19 @@ struct LiveRoomView: View {
             print("[CONNECT] connected to room:", room.name ?? "(nil)")
 
             if identity == "photographer" {
+                #if targetEnvironment(simulator)
+                self.errorMessage = "カメラの映像がありません（シミュレータではカメラは使えません）"
+                return
+                #else
+                guard hasCameraDevice() else {
+                    self.errorMessage = "カメラの映像がありません（カメラが見つかりません）"
+                    return
+                }
                 try await publishCamera(position: camPos)
+                #endif
             } else {
                 attachExistingRemoteIfAny()
+                // 被写体は確定まで送らない仕様
             }
 
         } catch {
@@ -774,24 +574,120 @@ struct LiveRoomView: View {
         print("[REMOTE] no existing remote video found")
     }
 
+    // ===== データ受信処理（撮影者側で反映＋ログ） =====
+    @MainActor
+    private func handleData(_ data: Data, topic: String) {
+        print("[DATA] received topic:", topic, "bytes:", data.count)
+
+        // ガイド用トピック以外は無視
+        guard topic == guideTopic else { return }
+
+        do {
+            let payload = try JSONDecoder().decode(GuidePayload.self, from: data)
+
+            applyGuide(index: payload.index, transform: payload.transform)
+
+            print("[GUIDE] 変更が届きました index:", payload.index,
+                  "scale:", payload.transform.scale,
+                  "offsetX:", payload.transform.offsetX,
+                  "offsetY:", payload.transform.offsetY,
+                  "rotation(rad):", payload.transform.rotation)
+
+            if role == .photographer {
+                lastRxLog = "変更が届きました  idx:\(payload.index)  s:\(String(format: "%.2f", payload.transform.scale))  x:\(Int(payload.transform.offsetX))  y:\(Int(payload.transform.offsetY))  r:\(String(format: "%.2f", payload.transform.rotation))"
+            }
+
+        } catch {
+            print("[GUIDE][ERR] decode failed:", error.localizedDescription)
+            if role == .photographer {
+                lastRxLog = "受信したがデコード失敗"
+            }
+        }
+    }
+
+    @MainActor
+    private func applyGuide(index: Int, transform: GuideTransform? = nil) {
+        guard frameAssets.indices.contains(index) else { return }
+        selectedGuideIndex = index
+        guideImage = UIImage(named: frameAssets[index])
+        if let t = transform {
+            baseTransform = t
+            workScale = 1.0
+            workOffset = .zero
+            workRotation = .zero
+        }
+    }
+
+    // ===== ガイド選択（ローカルのみ反映・送信なし） =====
+    @MainActor
+    private func selectGuide(index: Int) async {
+        guard frameAssets.indices.contains(index), photoAssets.indices.contains(index) else { return }
+        selectedGuideIndex = index
+        guideImage = UIImage(named: frameAssets[index])
+    }
+
+    // ===== 確定押下で一度だけ送信 =====
+    @MainActor
+    private func confirmGuideSync() async {
+        guard room.connectionState == .connected else { return }
+        let payload = GuidePayload(index: selectedGuideIndex, transform: currentEffectiveTransform)
+        guard let data = try? JSONEncoder().encode(payload) else { return }
+
+        do {
+            // Bool 版の DataPublishOptions
+            let opts = DataPublishOptions(topic: guideTopic, reliable: true)
+            try await room.localParticipant.publish(data: data, options: opts)
+
+            withAnimation(.easeInOut(duration: 0.2)) { showSentToast = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                withAnimation(.easeInOut(duration: 0.2)) { showSentToast = false }
+            }
+            baseTransform = currentEffectiveTransform
+            workScale = 1.0
+            workOffset = .zero
+            workRotation = .zero
+            print("[GUIDE] sent index:", selectedGuideIndex)
+        } catch {
+            print("[GUIDE][ERR] publish failed:", error.localizedDescription)
+        }
+    }
+
     // ===== カメラ =====
     @MainActor
     private func publishCamera(position: CamPos) async throws {
         if let track = localTrack,
            let capturer = track.capturer as? CameraCapturer {
-            try await capturer.set(cameraPosition: position == .front ? .front : .back)
-            camPos = position
-            print("[CAMERA] switched (reuse track): \(position == .front ? "front" : "back")")
-            return
+            do {
+                try await capturer.set(cameraPosition: position == .front ? .front : .back)
+                camPos = position
+                print("[CAMERA] switched (reuse track): \(position == .front ? "front" : "back")")
+                return
+            } catch {
+                let ns = error as NSError
+                if ns.domain == "io.livekit.swift-sdk", ns.code == 701 {
+                    self.errorMessage = "カメラの映像がありません（デバイスが見つかりません）"
+                    return
+                }
+                throw error
+            }
         }
 
         let options = CameraCaptureOptions(position: position == .front ? .front : .back)
         let cam = LocalVideoTrack.createCameraTrack(options: options)
         self.localTrack = cam
-        let pub: LocalTrackPublication = try await room.localParticipant.publish(videoTrack: cam)
-        self.localPub = pub
-        camPos = position
-        print("[CAMERA] published video (\(position == .front ? "front" : "back"))")
+        do {
+            let pub: LocalTrackPublication = try await room.localParticipant.publish(videoTrack: cam)
+            self.localPub = pub
+            camPos = position
+            print("[CAMERA] published video (\(position == .front ? "front" : "back"))")
+        } catch {
+            let ns = error as NSError
+            if ns.domain == "io.livekit.swift-sdk", ns.code == 701 {
+                self.errorMessage = "カメラの映像がありません（デバイスが見つかりません）"
+                return
+            }
+            throw error
+        }
     }
 
     @MainActor
@@ -809,16 +705,15 @@ struct LiveRoomView: View {
             }
         } catch {
             print("[CAMERA][ERR] \(error)")
-            self.errorMessage = "カメラ切替に失敗しました"
+            self.errorMessage = self.errorMessage ?? "カメラ切替に失敗しました"
         }
     }
 
-    // ===== 撮影（ガイド無しを写真ライブラリへ） =====
+    // ===== 撮影（ガイド無しの生写真を保存） =====
     @MainActor
     private func captureWithAVFoundation() async {
         guard role == .photographer else { return }
 
-        // 追加専用の権限
         if PHPhotoLibrary.authorizationStatus(for: .addOnly) == .notDetermined {
             _ = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         }
