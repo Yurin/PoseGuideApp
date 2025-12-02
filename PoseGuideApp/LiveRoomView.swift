@@ -7,7 +7,7 @@ import Photos
 struct VideoHostView: UIViewRepresentable {
     let track: VideoTrack?
     let contentMode: UIView.ContentMode
-    let mirror: Bool   // ← 追加
+    let mirror: Bool
 
     func makeUIView(context: Context) -> LiveKit.VideoView {
         let v = LiveKit.VideoView()
@@ -213,7 +213,7 @@ struct LiveRoomView: View {
         role == .subject ? -1.0 : 1.0
     }
 
-    // 現在の確定すべき状態
+    // 現在の確定すべき状態（被写体側の画面座標系）
     private var currentEffectiveTransform: GuideTransform {
         var t = baseTransform
         t.scale *= workScale
@@ -613,6 +613,16 @@ struct LiveRoomView: View {
         return !session.devices.isEmpty
     }
 
+    // ===== 被写体側から送る前に左右反転座標に直す =====
+    private func transformForSending(_ t: GuideTransform) -> GuideTransform {
+        guard role == .subject else { return t }
+
+        var canonical = t
+        canonical.offsetX = -t.offsetX
+        canonical.rotation = -t.rotation
+        return canonical
+    }
+
     // ===== 接続 =====
     @MainActor
     private func connectToRoom(roomName: String, identity: String) async {
@@ -747,7 +757,14 @@ struct LiveRoomView: View {
     @MainActor
     private func confirmGuideSync() async {
         guard room.connectionState == .connected else { return }
-        let payload = GuidePayload(index: selectedGuideIndex, transform: currentEffectiveTransform)
+
+        // 被写体の画面上での最終状態
+        let rawTransform = currentEffectiveTransform
+
+        // 送信用に左右反転座標へ変換（撮影者側の非ミラー座標系）
+        let sendTransform = transformForSending(rawTransform)
+
+        let payload = GuidePayload(index: selectedGuideIndex, transform: sendTransform)
         guard let data = try? JSONEncoder().encode(payload) else { return }
 
         do {
@@ -758,11 +775,16 @@ struct LiveRoomView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                 withAnimation(.easeInOut(duration: 0.2)) { showSentToast = false }
             }
-            baseTransform = currentEffectiveTransform
+
+            // ローカル状態は被写体の見た目のままにしておく
+            baseTransform = rawTransform
             workScale = 1.0
             workOffset = .zero
             workRotation = .zero
+
             print("[GUIDE] sent index:", selectedGuideIndex)
+            print("[GUIDE] raw:", rawTransform)
+            print("[GUIDE] send(canonical):", sendTransform)
         } catch {
             print("[GUIDE][ERR] publish failed:", error.localizedDescription)
         }
