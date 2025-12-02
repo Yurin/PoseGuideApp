@@ -208,6 +208,11 @@ struct LiveRoomView: View {
                height: baseTransform.offsetY + workOffset.height)
     }
 
+    // 被写体の時だけ左右反転するための係数
+    private var subjectMirrorX: CGFloat {
+        role == .subject ? -1.0 : 1.0
+    }
+
     // 現在の確定すべき状態
     private var currentEffectiveTransform: GuideTransform {
         var t = baseTransform
@@ -332,7 +337,8 @@ struct LiveRoomView: View {
                         .resizable()
                         .scaledToFit()
                         .opacity(guideOpacity)
-                        .scaleEffect(effScale)
+                        .scaleEffect(x: subjectMirrorX * effScale,
+                                     y: effScale)
                         .rotationEffect(effRotation)
                         .offset(effOffset)
                         .allowsHitTesting(role == .subject)
@@ -496,6 +502,7 @@ struct LiveRoomView: View {
                 Image(uiImage: ref)
                     .resizable()
                     .scaledToFit()
+                    .scaleEffect(x: subjectMirrorX, y: 1.0)
                     .frame(width: 120)
                     .background(Color.black.opacity(0.6))
                     .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -610,7 +617,7 @@ struct LiveRoomView: View {
     @MainActor
     private func connectToRoom(roomName: String, identity: String) async {
         // 実機から到達可能なIPv4に合わせて変更すること
-        let tokenURL = "http://192.168.50.92:3000/token?roomName=\(roomName)&identity=\(identity)"
+        let tokenURL = "http://192.168.10.16:3000/token?roomName=\(roomName)&identity=\(identity)"
         guard let url = URL(string: tokenURL) else {
             print("[CONNECT][ERR] token URL invalid:", tokenURL)
             return
