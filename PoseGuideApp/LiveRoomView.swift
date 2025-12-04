@@ -627,7 +627,7 @@ struct LiveRoomView: View {
     @MainActor
     private func connectToRoom(roomName: String, identity: String) async {
         // 実機から到達可能なIPv4に合わせて変更すること
-        let tokenURL = "http://192.168.10.16:3000/token?roomName=\(roomName)&identity=\(identity)"
+        let tokenURL = "http://192.168.51.39:3000/token?roomName=\(roomName)&identity=\(identity)"
         guard let url = URL(string: tokenURL) else {
             print("[CONNECT][ERR] token URL invalid:", tokenURL)
             return
